@@ -32,6 +32,13 @@ class StudioConfigRepository(context: Context) {
       transitionOriginalName = prefs.getString(KEY_TRANSITION_NAME, "") ?: "",
       bgmOriginalName = prefs.getString(KEY_BGM_NAME, "") ?: "",
       outroOriginalName = prefs.getString(KEY_OUTRO_NAME, "") ?: "",
+      geminiApiKey = prefs.getString(KEY_GEMINI_API_KEY, "") ?: "",
+      geminiModel =
+        prefs.getString(KEY_GEMINI_MODEL, StudioConfig.DEFAULT_GEMINI_MODEL)
+          ?.ifBlank { StudioConfig.DEFAULT_GEMINI_MODEL }
+          ?: StudioConfig.DEFAULT_GEMINI_MODEL,
+      scriptWriterGodPrompt = prefs.getString(KEY_GOD_PROMPT, "") ?: "",
+      autoPilotFullAuto = prefs.getBoolean(KEY_AUTO_PILOT_FULL_AUTO, false),
     )
 
   fun save(config: StudioConfig) {
@@ -54,6 +61,13 @@ class StudioConfigRepository(context: Context) {
       .putString(KEY_TRANSITION_NAME, config.transitionOriginalName)
       .putString(KEY_BGM_NAME, config.bgmOriginalName)
       .putString(KEY_OUTRO_NAME, config.outroOriginalName)
+      .putString(KEY_GEMINI_API_KEY, config.geminiApiKey)
+      .putString(
+        KEY_GEMINI_MODEL,
+        config.geminiModel.trim().ifEmpty { StudioConfig.DEFAULT_GEMINI_MODEL },
+      )
+      .putString(KEY_GOD_PROMPT, config.scriptWriterGodPrompt)
+      .putBoolean(KEY_AUTO_PILOT_FULL_AUTO, config.autoPilotFullAuto)
       .apply()
   }
 
@@ -75,5 +89,9 @@ class StudioConfigRepository(context: Context) {
     private const val KEY_TRANSITION_NAME = "transition_original_name"
     private const val KEY_BGM_NAME = "bgm_original_name"
     private const val KEY_OUTRO_NAME = "outro_original_name"
+    private const val KEY_GEMINI_API_KEY = "gemini_api_key"
+    private const val KEY_GEMINI_MODEL = "gemini_model"
+    private const val KEY_GOD_PROMPT = "script_writer_god_prompt"
+    private const val KEY_AUTO_PILOT_FULL_AUTO = "auto_pilot_full_auto"
   }
 }

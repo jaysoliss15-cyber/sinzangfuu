@@ -292,7 +292,8 @@ class StudioController(private val appContext: Context) {
       return
     }
 
-    val targetPart = _config.value.selectedPart
+    val cfg = _config.value
+    val targetPart = cfg.selectedPart
     val taskTitle =
       if (generateFromTopic) "Gemini Auto-Pilot (Part $targetPart)"
       else "Gemini Self-Audit (Part $targetPart)"
@@ -302,7 +303,11 @@ class StudioController(private val appContext: Context) {
         geminiScriptClient.runAutoPilotAndAudit(
           topicOrDraft = inputText,
           partNumber = targetPart,
+          totalParts = cfg.partCount,
           generateFromTopic = generateFromTopic,
+          geminiApiKey = cfg.geminiApiKey,
+          geminiModel = cfg.geminiModel,
+          godPrompt = cfg.scriptWriterGodPrompt,
           onProgress = { pct, step ->
             _progress.value =
               PipelineProgress(
@@ -310,7 +315,7 @@ class StudioController(private val appContext: Context) {
                 taskTitle = taskTitle,
                 progressPercent = pct,
                 stepText = step,
-                etaText = if (pct >= 3) "Active" else "Calculating...",
+                etaText = computeDynamicEta(pct),
                 elapsedText = formatElapsedFromStart(),
               )
           },
@@ -323,6 +328,156 @@ class StudioController(private val appContext: Context) {
           "Part $targetPart script audited (${outcome.qaResult.charCount} chars, ${outcome.repairPassesUsed} repair(s))",
       )
     }
+  }
+
+  fun runAutoPilotEpisode(
+    topicPrompt: String,
+    fullAuto: Boolean,
+  ) {
+    if (activeJob?.isActive == true) {
+      emitSnackbar("Another studio task is currently running.")
+      return
+    }
+    val cleanTopic = topicPrompt.trim()
+    if (cleanTopic.isEmpty()) {
+      emitSnackbar("Enter an Episode Topic / Prompt first.")
+      return
+    }
+
+    val cfg = _config.value
+    if (fullAuto && cfg.apiKey.isBlank()) {
+      _runStatus.value = StudioRunStatus.ERROR
+      appendLog("ElevenLabs API Key missing for Full Auto. Set it in API & Settings or switch to Scripts Only.", LogLevel.ERROR)
+      emitSnackbar("Missing ElevenLabs API Key for Full Auto")
+      return
+    }
+
+    updateConfig { it.copy(autoPilotFullAuto = fullAuto) }
+    val totalParts = cfg.partCount.coerceIn(1, 30)
+    val taskTitle =
+      if (fullAuto) "Full Auto-Pilot ($totalParts Parts)"
+      else "Scripts Auto-Pilot ($totalParts Parts)"
+
+    launchForegroundTask(taskTitle) {
+      fileManager.ensurePartFolders(totalParts)
+      var priorTail = ""
+      var firstOrLatestScript = ""
+
+      val scriptStageWeight = if (fullAuto) 35.0 else 100.0
+      val perPartSpan = scriptStageWeight / totalParts.toDouble()
+
+      for (partNum in 1..totalParts) {
+        val partStart = (partNum - 1) * perPartSpan
+        val scriptEnd =
+          if (fullAuto) partStart + perPartSpan * 0.55
+          else partStart + perPartSpan
+
+        val outcome =
+          geminiScriptClient.runAutoPilotAndAudit(
+            topicOrDraft = cleanTopic,
+            partNumber = partNum,
+            totalParts = totalParts,
+            generateFromTopic = true,
+            geminiApiKey = cfg.geminiApiKey,
+            geminiModel = cfg.geminiModel,
+            godPrompt = cfg.scriptWriterGodPrompt,
+            priorPartTail = priorTail,
+            onProgress = { subPct, step ->
+              val overall = (partStart + (scriptEnd - partStart) * (subPct / 100.0)).toInt().coerceIn(1, 99)
+              _progress.value =
+                PipelineProgress(
+                  isRunning = true,
+                  taskTitle = taskTitle,
+                  progressPercent = overall,
+                  stepText = step,
+                  etaText = computeDynamicEta(overall),
+                  elapsedText = formatElapsedFromStart(),
+                )
+            },
+            onLog = ::appendLog,
+          )
+
+        val partDir = fileManager.getPartDir(partNum).apply { mkdirs() }
+        val transcriptFile = File(partDir, "${partNum}_transcript.txt")
+        transcriptFile.writeText(outcome.qaResult.cleanedTranscript, Charsets.UTF_8)
+        appendLog("Saved Part $partNum clean transcript (${outcome.qaResult.charCount} chars).", LogLevel.INFO)
+
+        priorTail = outcome.qaResult.cleanedTranscript.takeLast(500)
+        if (firstOrLatestScript.isEmpty() || partNum == cfg.selectedPart) {
+          firstOrLatestScript = outcome.cleanScript
+        }
+
+        if (fullAuto) {
+          val ttsStart = scriptEnd
+          val ttsEnd = partStart + perPartSpan
+          audioProcessor.processPartVoice(
+            partNumber = partNum,
+            qaResult = outcome.qaResult,
+            config = cfg,
+            onProgress = { subPct, step, _ ->
+              val overall = (ttsStart + (ttsEnd - ttsStart) * (subPct / 100.0)).toInt().coerceIn(1, 99)
+              _progress.value =
+                PipelineProgress(
+                  isRunning = true,
+                  taskTitle = taskTitle,
+                  progressPercent = overall,
+                  stepText = step,
+                  etaText = computeDynamicEta(overall),
+                  elapsedText = formatElapsedFromStart(),
+                )
+            },
+            onLog = ::appendLog,
+          )
+        }
+        refreshWorkspaceAndMediaHub()
+      }
+
+      if (firstOrLatestScript.isNotBlank()) {
+        replaceDialogueWithUndo(
+          newText = firstOrLatestScript,
+          runLogQa = true,
+          snackbarMessage =
+            if (fullAuto) "Scripts + voices ready; starting video render..."
+            else "Auto-Pilot generated $totalParts script(s)",
+        )
+      }
+
+      if (fullAuto) {
+        val finalVideo =
+          videoPipeline.renderFullDocumentary(
+            config = cfg,
+            onProgress = { subPct, step, _ ->
+              val overall = (35.0 + 65.0 * (subPct / 100.0)).toInt().coerceIn(35, 100)
+              _progress.value =
+                PipelineProgress(
+                  isRunning = true,
+                  taskTitle = taskTitle,
+                  progressPercent = overall,
+                  stepText = step,
+                  etaText = computeDynamicEta(overall),
+                  elapsedText = formatElapsedFromStart(),
+                )
+            },
+            onLog = ::appendLog,
+          )
+        refreshWorkspaceAndMediaHub()
+        emitSnackbar("Full Auto-Pilot complete: ${finalVideo.name}")
+      } else {
+        refreshWorkspaceAndMediaHub()
+        emitSnackbar("Auto-Pilot generated $totalParts part script(s)")
+      }
+    }
+  }
+
+  private fun computeDynamicEta(pct: Int): String {
+    if (pct >= 100) return "Done"
+    if (pct < 3 || activeTaskStartMs <= 0L) return "Calculating..."
+    val elapsedSec = (System.currentTimeMillis() - activeTaskStartMs) / 1000.0
+    if (elapsedSec < 0.5) return "Calculating..."
+    val remainingSec = (elapsedSec * (100 - pct) / pct.toDouble()).toInt().coerceAtLeast(1)
+    val mins = remainingSec / 60
+    val rem = remainingSec % 60
+    return if (mins > 0) "${mins}m ${rem}s" else "${rem}s"
   }
 
   fun startDownloadVoice() {

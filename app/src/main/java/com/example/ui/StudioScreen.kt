@@ -32,6 +32,7 @@ import com.example.data.PipelineProgress
 import com.example.data.RenderFilterMode
 import com.example.data.ScriptQaResult
 import com.example.data.StudioConfig
+import com.example.ui.components.AutoPilotCard
 import com.example.ui.components.DialogueEditorCard
 import com.example.ui.components.PartWorkspaceCard
 import com.example.ui.components.ProgressAndLogCard
@@ -69,6 +70,9 @@ fun StudioScreen(
   onSanitizeDialogue: () -> Unit,
   onRunGeminiAutoPilot: (String) -> Unit,
   onRunGeminiSelfAudit: () -> Unit,
+  onReadClipboard: () -> String?,
+  onAutoPilotFullAutoToggle: (Boolean) -> Unit,
+  onRunAutoPilotEpisode: (topicPrompt: String, fullAuto: Boolean) -> Unit,
   onAutoPasteToggle: (Boolean) -> Unit,
   onAutoNextToggle: (Boolean) -> Unit,
   onDownloadVoice: () -> Unit,
@@ -217,6 +221,15 @@ fun StudioScreen(
         onLoadTxt = onLoadTxt,
         onTogglePlayAudio = onTogglePlayAudio,
         onClearPart = onClearPart,
+      )
+
+      AutoPilotCard(
+        partCount = config.partCount,
+        fullAuto = config.autoPilotFullAuto,
+        isBusy = progress.isRunning,
+        onReadClipboard = onReadClipboard,
+        onFullAutoToggle = onAutoPilotFullAutoToggle,
+        onRunAutoPilotEpisode = onRunAutoPilotEpisode,
       )
 
       DialogueEditorCard(

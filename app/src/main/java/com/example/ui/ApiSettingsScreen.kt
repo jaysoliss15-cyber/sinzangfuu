@@ -19,6 +19,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBalanceWallet
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.CleaningServices
+import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Save
@@ -65,6 +68,7 @@ import com.example.ui.theme.StudioCyanDim
 import com.example.ui.theme.StudioGreen
 import com.example.ui.theme.StudioOutline
 import com.example.ui.theme.StudioRed
+import com.example.ui.theme.StudioTextMuted
 import com.example.ui.theme.StudioTextPrimary
 import com.example.ui.theme.StudioTextSecondary
 import java.text.SimpleDateFormat
@@ -77,7 +81,16 @@ fun ApiSettingsScreen(
   config: StudioConfig,
   subscriptionInfo: SubscriptionInfo?,
   isCheckingSubscription: Boolean,
-  onSaveSettings: (apiKey: String, voiceId: String, modelId: String, sfxModelId: String) -> Unit,
+  onReadClipboard: () -> String?,
+  onSaveSettings: (
+    apiKey: String,
+    voiceId: String,
+    modelId: String,
+    sfxModelId: String,
+    geminiApiKey: String,
+    geminiModel: String,
+    scriptWriterGodPrompt: String,
+  ) -> Unit,
   onCheckCredits: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
@@ -86,6 +99,13 @@ fun ApiSettingsScreen(
   var modelId by remember(config.modelId) { mutableStateOf(config.modelId) }
   var sfxModelId by remember(config.sfxModelId) { mutableStateOf(config.sfxModelId) }
   var showApiKey by remember { mutableStateOf(false) }
+
+  var geminiApiKey by remember(config.geminiApiKey) { mutableStateOf(config.geminiApiKey) }
+  var geminiModel by remember(config.geminiModel) { mutableStateOf(config.geminiModel) }
+  var scriptWriterGodPrompt by remember(config.scriptWriterGodPrompt) {
+    mutableStateOf(config.scriptWriterGodPrompt)
+  }
+  var showGeminiApiKey by remember { mutableStateOf(false) }
 
   val textFieldColors =
     OutlinedTextFieldDefaults.colors(
@@ -97,6 +117,18 @@ fun ApiSettingsScreen(
       unfocusedTextColor = StudioTextPrimary,
     )
 
+  fun commitAllSettings() {
+    onSaveSettings(
+      apiKey,
+      voiceId,
+      modelId,
+      sfxModelId,
+      geminiApiKey,
+      geminiModel,
+      scriptWriterGodPrompt,
+    )
+  }
+
   Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
     Column(
       modifier =
@@ -106,6 +138,7 @@ fun ApiSettingsScreen(
           .padding(horizontal = 14.dp, vertical = 12.dp),
       verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+      // ElevenLabs API & Voice Config
       Card(
         colors = CardDefaults.cardColors(containerColor = StudioCard),
         border = BorderStroke(1.dp, StudioOutline),
@@ -172,6 +205,132 @@ fun ApiSettingsScreen(
             colors = textFieldColors,
             modifier = Modifier.fillMaxWidth().testTag("sfx_model_id_input"),
           )
+        }
+      }
+
+      // Gemini Script Auto-Pilot Config
+      Card(
+        colors = CardDefaults.cardColors(containerColor = StudioCard),
+        border = BorderStroke(1.dp, StudioOutline),
+        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier.fillMaxWidth(),
+      ) {
+        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+          Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Icon(Icons.Filled.AutoAwesome, contentDescription = null, tint = StudioCyan)
+            Text(
+              text = "GEMINI SCRIPT AUTO-PILOT",
+              style = MaterialTheme.typography.titleSmall,
+              color = StudioCyan,
+            )
+          }
+
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
+            OutlinedTextField(
+              value = geminiApiKey,
+              onValueChange = { geminiApiKey = it },
+              singleLine = true,
+              label = { Text("Gemini API Key") },
+              placeholder = { Text("Optional personal key (or blank for built-in Firebase AI)") },
+              visualTransformation =
+                if (showGeminiApiKey) VisualTransformation.None else PasswordVisualTransformation(),
+              trailingIcon = {
+                IconButton(
+                  onClick = { showGeminiApiKey = !showGeminiApiKey },
+                  modifier = Modifier.testTag("toggle_gemini_key_visibility"),
+                ) {
+                  Icon(
+                    imageVector = if (showGeminiApiKey) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                    contentDescription = if (showGeminiApiKey) "Hide Gemini API key" else "Show Gemini API key",
+                    tint = StudioTextSecondary,
+                  )
+                }
+              },
+              colors = textFieldColors,
+              modifier = Modifier.weight(1f).testTag("gemini_api_key_input"),
+            )
+
+            OutlinedButton(
+              onClick = {
+                val clip = onReadClipboard()?.trim()
+                if (!clip.isNullOrEmpty()) {
+                  geminiApiKey = clip
+                }
+              },
+              border = BorderStroke(1.dp, StudioCyan.copy(alpha = 0.6f)),
+              modifier = Modifier.heightIn(min = 52.dp).testTag("paste_gemini_key_button"),
+            ) {
+              Icon(Icons.Filled.ContentPaste, contentDescription = null, modifier = Modifier.size(16.dp), tint = StudioCyan)
+              Spacer(Modifier.width(4.dp))
+              Text("Paste", color = StudioCyan)
+            }
+          }
+
+          OutlinedTextField(
+            value = geminiModel,
+            onValueChange = { geminiModel = it },
+            singleLine = true,
+            label = { Text("Gemini Model") },
+            placeholder = { Text(StudioConfig.DEFAULT_GEMINI_MODEL) },
+            colors = textFieldColors,
+            modifier = Modifier.fillMaxWidth().testTag("gemini_model_input"),
+          )
+
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
+            Text(
+              text = "Script Writer God Prompt",
+              style = MaterialTheme.typography.labelLarge,
+              color = StudioTextPrimary,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+              OutlinedButton(
+                onClick = { scriptWriterGodPrompt = "" },
+                border = BorderStroke(1.dp, StudioOutline),
+                modifier = Modifier.heightIn(min = 48.dp).testTag("clear_god_prompt_button"),
+              ) {
+                Icon(Icons.Filled.CleaningServices, contentDescription = null, modifier = Modifier.size(16.dp), tint = StudioAmber)
+                Spacer(Modifier.width(4.dp))
+                Text("Clear", color = StudioTextPrimary)
+              }
+              OutlinedButton(
+                onClick = {
+                  val clip = onReadClipboard()
+                  if (!clip.isNullOrBlank()) {
+                    scriptWriterGodPrompt = clip
+                  }
+                },
+                border = BorderStroke(1.dp, StudioCyan.copy(alpha = 0.6f)),
+                modifier = Modifier.heightIn(min = 48.dp).testTag("paste_god_prompt_button"),
+              ) {
+                Icon(Icons.Filled.ContentPaste, contentDescription = null, modifier = Modifier.size(16.dp), tint = StudioCyan)
+                Spacer(Modifier.width(4.dp))
+                Text("Paste", color = StudioCyan)
+              }
+            }
+          }
+
+          OutlinedTextField(
+            value = scriptWriterGodPrompt,
+            onValueChange = { scriptWriterGodPrompt = it },
+            minLines = 5,
+            maxLines = 10,
+            placeholder = {
+              Text(
+                "Paste custom style rules, pacing rules, or God Prompt system instructions for Gemini Auto-Pilot...",
+                color = StudioTextMuted,
+              )
+            },
+            colors = textFieldColors,
+            modifier = Modifier.fillMaxWidth().testTag("god_prompt_input"),
+          )
 
           Row(
             modifier = Modifier.fillMaxWidth(),
@@ -182,6 +341,7 @@ fun ApiSettingsScreen(
                 voiceId = StudioConfig.DEFAULT_VOICE_ID
                 modelId = StudioConfig.DEFAULT_MODEL_ID
                 sfxModelId = StudioConfig.DEFAULT_SFX_MODEL_ID
+                geminiModel = StudioConfig.DEFAULT_GEMINI_MODEL
               },
               border = BorderStroke(1.dp, StudioOutline),
               modifier = Modifier.heightIn(min = 48.dp).testTag("reset_defaults_button"),
@@ -192,7 +352,7 @@ fun ApiSettingsScreen(
             }
 
             Button(
-              onClick = { onSaveSettings(apiKey, voiceId, modelId, sfxModelId) },
+              onClick = { commitAllSettings() },
               colors =
                 ButtonDefaults.buttonColors(
                   containerColor = StudioGreen,
@@ -202,7 +362,7 @@ fun ApiSettingsScreen(
             ) {
               Icon(Icons.Filled.Save, contentDescription = null, modifier = Modifier.size(18.dp))
               Spacer(Modifier.width(6.dp))
-              Text("Save API Settings", fontWeight = FontWeight.Bold)
+              Text("Save All Settings", fontWeight = FontWeight.Bold)
             }
           }
         }
@@ -227,7 +387,7 @@ fun ApiSettingsScreen(
 
           FilledTonalButton(
             onClick = {
-              onSaveSettings(apiKey, voiceId, modelId, sfxModelId)
+              commitAllSettings()
               onCheckCredits()
             },
             enabled = !isCheckingSubscription,

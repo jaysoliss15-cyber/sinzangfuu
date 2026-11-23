@@ -75,11 +75,16 @@ data class StudioConfig(
   val transitionOriginalName: String = "",
   val bgmOriginalName: String = "",
   val outroOriginalName: String = "",
+  val geminiApiKey: String = "",
+  val geminiModel: String = DEFAULT_GEMINI_MODEL,
+  val scriptWriterGodPrompt: String = "",
+  val autoPilotFullAuto: Boolean = false,
 ) {
   companion object {
     const val DEFAULT_VOICE_ID = "N2lVS1w4EtoT3dr4eOWO"
     const val DEFAULT_MODEL_ID = "eleven_v4"
     const val DEFAULT_SFX_MODEL_ID = "eleven_text_to_sound_v2"
+    const val DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
   }
 }
 

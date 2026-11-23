@@ -400,6 +400,11 @@ fun MissingPageStudioApp(
               onSanitizeDialogue = { viewModel.sanitizeDialogue() },
               onRunGeminiAutoPilot = { viewModel.runGeminiAutoPilot(it) },
               onRunGeminiSelfAudit = { viewModel.runGeminiSelfAudit() },
+              onReadClipboard = { viewModel.readClipboard() },
+              onAutoPilotFullAutoToggle = { viewModel.setAutoPilotFullAuto(it) },
+              onRunAutoPilotEpisode = { topic, fullAuto ->
+                viewModel.runAutoPilotEpisode(topic, fullAuto)
+              },
               onAutoPasteToggle = { viewModel.setAutoPasteEnabled(it) },
               onAutoNextToggle = { viewModel.setAutoNextPartEnabled(it) },
               onDownloadVoice = { viewModel.startDownloadVoice() },
@@ -448,8 +453,17 @@ fun MissingPageStudioApp(
               config = config,
               subscriptionInfo = subscriptionInfo,
               isCheckingSubscription = isCheckingSubscription,
-              onSaveSettings = { key, voice, model, sfxModel ->
-                viewModel.saveApiSettings(key, voice, model, sfxModel)
+              onReadClipboard = { viewModel.readClipboard() },
+              onSaveSettings = { key, voice, model, sfxModel, geminiKey, geminiModel, godPrompt ->
+                viewModel.saveApiSettings(
+                  apiKey = key,
+                  voiceId = voice,
+                  modelId = model,
+                  sfxModelId = sfxModel,
+                  geminiApiKey = geminiKey,
+                  geminiModel = geminiModel,
+                  scriptWriterGodPrompt = godPrompt,
+                )
               },
               onCheckCredits = { viewModel.checkSubscriptionCredits() },
               modifier = Modifier.weight(1f),

@@ -100,11 +100,18 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     controller.updateConfig { it.copy(autoCleanAfterExport = enabled) }
   }
 
+  fun setAutoPilotFullAuto(fullAuto: Boolean) {
+    controller.updateConfig { it.copy(autoPilotFullAuto = fullAuto) }
+  }
+
   fun saveApiSettings(
     apiKey: String,
     voiceId: String,
     modelId: String,
     sfxModelId: String,
+    geminiApiKey: String,
+    geminiModel: String,
+    scriptWriterGodPrompt: String,
   ) {
     controller.updateConfig {
       it.copy(
@@ -112,15 +119,22 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
         voiceId = voiceId.trim().ifEmpty { com.example.data.StudioConfig.DEFAULT_VOICE_ID },
         modelId = modelId.trim().ifEmpty { com.example.data.StudioConfig.DEFAULT_MODEL_ID },
         sfxModelId = sfxModelId.trim().ifEmpty { com.example.data.StudioConfig.DEFAULT_SFX_MODEL_ID },
+        geminiApiKey = geminiApiKey.trim(),
+        geminiModel = geminiModel.trim().ifEmpty { com.example.data.StudioConfig.DEFAULT_GEMINI_MODEL },
+        scriptWriterGodPrompt = scriptWriterGodPrompt,
       )
     }
-    controller.appendLog("Saved ElevenLabs API & model settings.", LogLevel.SUCCESS)
-    controller.emitSnackbar("API settings saved")
+    controller.appendLog("Saved ElevenLabs & Gemini Auto-Pilot API settings.", LogLevel.SUCCESS)
+    controller.emitSnackbar("All API settings saved")
   }
+
+  fun readClipboard(): String? = readClipboardPlainText()
 
   fun sanitizeDialogue() = controller.sanitizeDialogue()
   fun runGeminiAutoPilot(topicOrOutline: String) =
     controller.runGeminiAutoPilot(topicOrDraft = topicOrOutline, generateFromTopic = true)
+  fun runAutoPilotEpisode(topicPrompt: String, fullAuto: Boolean) =
+    controller.runAutoPilotEpisode(topicPrompt = topicPrompt, fullAuto = fullAuto)
   fun runGeminiSelfAudit() =
     controller.runGeminiAutoPilot(topicOrDraft = dialogueText.value, generateFromTopic = false)
   fun startDownloadVoice() = controller.startDownloadVoice()
