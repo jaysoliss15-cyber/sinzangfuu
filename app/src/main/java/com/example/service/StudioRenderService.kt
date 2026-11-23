@@ -16,6 +16,7 @@ import com.example.MainActivity
 import com.example.R
 import com.example.StudioApplication
 import com.example.data.PipelineProgress
+import com.example.data.StudioRunStatus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -64,8 +65,12 @@ class StudioRenderService : Service() {
       collectorJob =
         serviceScope.launch {
           controller.progress.collectLatest { progress ->
-            val manager = getSystemService(NotificationManager::class.java)
-            manager.notify(NOTIFICATION_ID, buildNotification(progress))
+            if (!progress.isRunning && controller.runStatus.value != StudioRunStatus.BUSY) {
+              stopForegroundAndSelf()
+            } else {
+              val manager = getSystemService(NotificationManager::class.java)
+              manager.notify(NOTIFICATION_ID, buildNotification(progress))
+            }
           }
         }
     }
@@ -82,6 +87,7 @@ class StudioRenderService : Service() {
   override fun onDestroy() {
     collectorJob?.cancel()
     serviceScope.cancel()
+    ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
     releaseWakeLock()
     super.onDestroy()
   }

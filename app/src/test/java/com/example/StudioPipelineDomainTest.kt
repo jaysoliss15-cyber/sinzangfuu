@@ -1,11 +1,13 @@
 package com.example
 
 import com.example.data.ScriptEvent
+import com.example.data.VideoRenderPipeline
 import com.example.domain.NaturalSort
 import com.example.domain.ScriptValidator
 import com.example.domain.TransitionParser
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -73,7 +75,6 @@ class StudioPipelineDomainTest {
 
     assertTrue(chunks.size >= 3)
     assertTrue(chunks.all { it.length <= 1000 })
-    // Rejoining chunks with single space must exactly equal original text (zero overlap, zero loss)
     assertEquals(longText, chunks.joinToString(" "))
   }
 
@@ -90,5 +91,42 @@ class StudioPipelineDomainTest {
     assertEquals(setOf(1, 2, 3, 4), TransitionParser.parseTransitionAfterParts("1", 5))
     assertEquals(setOf(2, 4), TransitionParser.parseTransitionAfterParts("2, 4, 6", 5))
     assertEquals(emptySet<Int>(), TransitionParser.parseTransitionAfterParts("2,4", 1))
+  }
+
+  @Test
+  fun `parses ffmpeg stderr time stamps into total seconds`() {
+    val line = "frame=  420 fps= 48 q=21.0 size=   10240kB time=01:02:03.45 bitrate=2412.1kbits/s speed=2.0x"
+    val seconds = VideoRenderPipeline.parseFfmpegTimeSeconds(line)
+    assertEquals(3723.45, seconds ?: -1.0, 0.001)
+    assertNull(VideoRenderPipeline.parseFfmpegTimeSeconds("Stream #0:0 -> #0:0 (copy)"))
+  }
+
+  @Test
+  fun `monotonic progress tracker never regresses and computes ETA after 3 percent`() {
+    var fakeClockMs = 1_000L
+    val emitted = mutableListOf<Triple<Int, String, String>>()
+    val tracker =
+      VideoRenderPipeline.MonotonicProgressTracker(
+        startTimeMs = 1_000L,
+        clockMs = { fakeClockMs },
+      ) { pct, step, eta ->
+        emitted += Triple(pct, step, eta)
+      }
+
+    fakeClockMs = 2_000L
+    tracker.report(2.0, "Step A")
+    assertEquals("Calculating...", emitted.last().third)
+
+    fakeClockMs = 11_000L
+    tracker.report(10.0, "Step B")
+    assertEquals(10, emitted.last().first)
+    assertTrue(emitted.last().third != "Calculating...")
+
+    // Attempt backward regression and same-pct rapid update within 250ms -> ignored
+    fakeClockMs = 11_050L
+    val countBefore = emitted.size
+    tracker.report(5.0, "Step B")
+    assertEquals(10, tracker.currentPercent)
+    assertEquals(countBefore, emitted.size)
   }
 }

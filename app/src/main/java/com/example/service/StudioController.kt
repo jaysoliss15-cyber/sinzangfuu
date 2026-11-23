@@ -224,6 +224,16 @@ class StudioController(private val appContext: Context) {
     _snackbarEvent.value = "Dialogue cleared" to "Undo"
   }
 
+  fun replaceDialogueWithUndo(
+    newText: String,
+    runLogQa: Boolean = true,
+    snackbarMessage: String,
+  ) {
+    lastClearedDialogueBackup = _dialogueText.value
+    setDialogueText(newText, runLogQa = runLogQa)
+    _snackbarEvent.value = snackbarMessage to "Undo"
+  }
+
   fun undoDialogueRestore() {
     val backup = lastClearedDialogueBackup ?: return
     setDialogueText(backup, runLogQa = true)
@@ -457,11 +467,7 @@ class StudioController(private val appContext: Context) {
   }
 
   private fun stopRenderService() {
-    val intent =
-      Intent(appContext, StudioRenderService::class.java).apply {
-        action = StudioRenderService.ACTION_STOP_SERVICE
-      }
-    runCatching { appContext.startService(intent) }
+    runCatching { appContext.stopService(Intent(appContext, StudioRenderService::class.java)) }
   }
 
   fun checkSubscriptionCredits() {

@@ -61,9 +61,12 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     if (hash == cfg.lastAutoPastedHash) return
 
     controller.updateConfig { it.copy(lastAutoPastedHash = hash) }
-    controller.setDialogueText(clipText, runLogQa = true)
     controller.appendLog("Auto-Pasted ${clipText.length} chars from clipboard.", LogLevel.INFO)
-    controller.emitSnackbar("Auto-pasted ${String.format("%,d", clipText.length)} chars", "Undo")
+    controller.replaceDialogueWithUndo(
+      newText = clipText,
+      runLogQa = true,
+      snackbarMessage = "Auto-pasted ${String.format("%,d", clipText.length)} chars",
+    )
   }
 
   fun setAutoPasteEnabled(enabled: Boolean) {
