@@ -1,0 +1,877 @@
+package com.example.ui.components
+
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.AudioFile
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.CleaningServices
+import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Movie
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.RocketLaunch
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import com.example.data.LogEntry
+import com.example.data.LogLevel
+import com.example.data.PartStatus
+import com.example.data.PipelineProgress
+import com.example.data.RenderFilterMode
+import com.example.data.ScriptQaResult
+import com.example.data.StudioConfig
+import com.example.ui.theme.JetBrainsMonoFontFamily
+import com.example.ui.theme.StudioAmber
+import com.example.ui.theme.StudioAmberDim
+import com.example.ui.theme.StudioBackground
+import com.example.ui.theme.StudioCard
+import com.example.ui.theme.StudioCardDeep
+import com.example.ui.theme.StudioCardElevated
+import com.example.ui.theme.StudioCyan
+import com.example.ui.theme.StudioCyanDim
+import com.example.ui.theme.StudioGreen
+import com.example.ui.theme.StudioGreenDim
+import com.example.ui.theme.StudioOutline
+import com.example.ui.theme.StudioRed
+import com.example.ui.theme.StudioRedDim
+import com.example.ui.theme.StudioTextMuted
+import com.example.ui.theme.StudioTextPrimary
+import com.example.ui.theme.StudioTextSecondary
+import java.util.Locale
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun PartWorkspaceCard(
+  config: StudioConfig,
+  partStatuses: List<PartStatus>,
+  playingAudioPart: Int?,
+  isBusy: Boolean,
+  onUpdatePartFolders: (Int) -> Unit,
+  onSelectPart: (Int) -> Unit,
+  onPickPartVideo: (Int) -> Unit,
+  onPickPartAudio: (Int) -> Unit,
+  onLoadTxt: () -> Unit,
+  onTogglePlayAudio: (Int) -> Unit,
+  onClearPart: (Int) -> Unit,
+) {
+  var pendingPartCount by remember(config.partCount) { mutableIntStateOf(config.partCount) }
+  var partCountDropdownExpanded by remember { mutableStateOf(false) }
+  var targetPartDropdownExpanded by remember { mutableStateOf(false) }
+  val selectedPartStatus = partStatuses.firstOrNull { it.partNumber == config.selectedPart }
+
+  Card(
+    colors = CardDefaults.cardColors(containerColor = StudioCard),
+    border = BorderStroke(1.dp, StudioOutline),
+    shape = RoundedCornerShape(16.dp),
+    modifier = Modifier.fillMaxWidth(),
+  ) {
+    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+      Text(
+        text = "PART SETUP & WORKSPACE",
+        style = MaterialTheme.typography.titleSmall,
+        color = StudioCyan,
+      )
+
+      // Part Count Selector (1..30) + Update Folders
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+      ) {
+        Box(modifier = Modifier.weight(1f)) {
+          OutlinedButton(
+            onClick = { partCountDropdownExpanded = true },
+            enabled = !isBusy,
+            border = BorderStroke(1.dp, StudioOutline),
+            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("part_count_dropdown"),
+          ) {
+            Text(
+              text = "Parts: $pendingPartCount",
+              color = StudioTextPrimary,
+              modifier = Modifier.weight(1f),
+            )
+            Icon(Icons.Filled.ArrowDropDown, contentDescription = "Select part count")
+          }
+          DropdownMenu(
+            expanded = partCountDropdownExpanded,
+            onDismissRequest = { partCountDropdownExpanded = false },
+          ) {
+            (1..30).forEach { count ->
+              DropdownMenuItem(
+                text = { Text("$count part(s)") },
+                onClick = {
+                  pendingPartCount = count
+                  partCountDropdownExpanded = false
+                },
+              )
+            }
+          }
+        }
+
+        FilledTonalButton(
+          onClick = { onUpdatePartFolders(pendingPartCount) },
+          enabled = !isBusy,
+          colors =
+            ButtonDefaults.filledTonalButtonColors(
+              containerColor = StudioCyanDim,
+              contentColor = StudioCyan,
+            ),
+          modifier = Modifier.heightIn(min = 48.dp).testTag("update_folders_button"),
+        ) {
+          Icon(Icons.Filled.FolderOpen, contentDescription = null, modifier = Modifier.size(18.dp))
+          Spacer(Modifier.width(6.dp))
+          Text("Update Folders")
+        }
+      }
+
+      // Target Part Dropdown + Active Part Summary
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+      ) {
+        Box(modifier = Modifier.weight(1f)) {
+          OutlinedButton(
+            onClick = { targetPartDropdownExpanded = true },
+            border = BorderStroke(1.dp, StudioCyan.copy(alpha = 0.6f)),
+            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("target_part_dropdown"),
+          ) {
+            Text(
+              text = "Target: Part ${config.selectedPart}",
+              color = StudioCyan,
+              fontWeight = FontWeight.Bold,
+              modifier = Modifier.weight(1f),
+            )
+            Icon(Icons.Filled.ArrowDropDown, contentDescription = "Select target part", tint = StudioCyan)
+          }
+          DropdownMenu(
+            expanded = targetPartDropdownExpanded,
+            onDismissRequest = { targetPartDropdownExpanded = false },
+          ) {
+            (1..config.partCount).forEach { num ->
+              DropdownMenuItem(
+                text = { Text("Part $num") },
+                onClick = {
+                  onSelectPart(num)
+                  targetPartDropdownExpanded = false
+                },
+              )
+            }
+          }
+        }
+
+        val statusSummary =
+          buildString {
+            append(if (selectedPartStatus?.hasAudio == true) "🎵 Audio" else "No Audio")
+            append(" • ")
+            append(if (selectedPartStatus?.hasCustomVideo == true) "🎬 Custom" else "Stock Loop")
+          }
+        Text(
+          text = statusSummary,
+          style = MaterialTheme.typography.bodySmall,
+          color = if (selectedPartStatus?.hasAudio == true) StudioGreen else StudioTextSecondary,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+        )
+      }
+
+      // Horizontal scrollable Part Status Chips (P1, P2, P3...)
+      LazyRow(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.fillMaxWidth(),
+      ) {
+        items(partStatuses, key = { it.partNumber }) { status ->
+          val isSelected = status.partNumber == config.selectedPart
+          val borderColor =
+            when {
+              isSelected -> StudioCyan
+              status.hasAudio -> StudioGreen.copy(alpha = 0.6f)
+              else -> StudioOutline
+            }
+          val bgColor =
+            when {
+              isSelected -> StudioCyanDim
+              status.hasAudio -> StudioGreenDim.copy(alpha = 0.55f)
+              else -> StudioCardElevated
+            }
+          Surface(
+            shape = RoundedCornerShape(10.dp),
+            color = bgColor,
+            border = BorderStroke(1.dp, borderColor),
+            modifier =
+              Modifier.heightIn(min = 48.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .clickable { onSelectPart(status.partNumber) }
+                .testTag("part_chip_${status.partNumber}"),
+          ) {
+            Row(
+              modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+              Text(
+                text = "P${status.partNumber}",
+                style = MaterialTheme.typography.labelLarge,
+                color = if (isSelected) StudioCyan else StudioTextPrimary,
+              )
+              if (status.hasAudio) {
+                Text(text = "🎵", style = MaterialTheme.typography.labelMedium)
+              }
+              if (status.hasCustomVideo) {
+                Text(text = "🎬", style = MaterialTheme.typography.labelMedium)
+              }
+            }
+          }
+        }
+      }
+
+      HorizontalDivider(color = StudioOutline.copy(alpha = 0.6f))
+
+      // 1-Tap Per-Part Media Controls
+      FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.fillMaxWidth(),
+      ) {
+        OutlinedButton(
+          onClick = { onPickPartVideo(config.selectedPart) },
+          enabled = !isBusy,
+          border = BorderStroke(1.dp, StudioOutline),
+          modifier = Modifier.heightIn(min = 48.dp).testTag("pick_part_mp4_button"),
+        ) {
+          Icon(Icons.Filled.Movie, contentDescription = null, modifier = Modifier.size(16.dp), tint = StudioCyan)
+          Spacer(Modifier.width(6.dp))
+          Text("🎬 Pick Part MP4", color = StudioTextPrimary)
+        }
+
+        OutlinedButton(
+          onClick = { onPickPartAudio(config.selectedPart) },
+          enabled = !isBusy,
+          border = BorderStroke(1.dp, StudioOutline),
+          modifier = Modifier.heightIn(min = 48.dp).testTag("pick_part_audio_button"),
+        ) {
+          Icon(Icons.Filled.AudioFile, contentDescription = null, modifier = Modifier.size(16.dp), tint = StudioGreen)
+          Spacer(Modifier.width(6.dp))
+          Text("🎵 Pick Part Audio", color = StudioTextPrimary)
+        }
+
+        OutlinedButton(
+          onClick = onLoadTxt,
+          border = BorderStroke(1.dp, StudioOutline),
+          modifier = Modifier.heightIn(min = 48.dp).testTag("load_txt_button"),
+        ) {
+          Icon(Icons.Filled.Description, contentDescription = null, modifier = Modifier.size(16.dp), tint = StudioAmber)
+          Spacer(Modifier.width(6.dp))
+          Text("📄 Load .TXT", color = StudioTextPrimary)
+        }
+
+        val isPlayingThisPart = playingAudioPart == config.selectedPart
+        FilledTonalButton(
+          onClick = { onTogglePlayAudio(config.selectedPart) },
+          colors =
+            ButtonDefaults.filledTonalButtonColors(
+              containerColor = if (isPlayingThisPart) StudioRedDim else StudioCardElevated,
+              contentColor = if (isPlayingThisPart) StudioRed else StudioGreen,
+            ),
+          modifier = Modifier.heightIn(min = 48.dp).testTag("play_stop_part_audio_button"),
+        ) {
+          Icon(
+            imageVector = if (isPlayingThisPart) Icons.Filled.Stop else Icons.Filled.PlayArrow,
+            contentDescription = if (isPlayingThisPart) "Stop audio" else "Play audio",
+            modifier = Modifier.size(18.dp),
+          )
+          Spacer(Modifier.width(4.dp))
+          Text(if (isPlayingThisPart) "⏹ Stop Audio" else "▶ Play Audio")
+        }
+
+        OutlinedButton(
+          onClick = { onClearPart(config.selectedPart) },
+          enabled = !isBusy,
+          border = BorderStroke(1.dp, StudioRed.copy(alpha = 0.5f)),
+          modifier = Modifier.heightIn(min = 48.dp).testTag("clear_part_button"),
+        ) {
+          Icon(Icons.Filled.DeleteOutline, contentDescription = null, modifier = Modifier.size(16.dp), tint = StudioRed)
+          Spacer(Modifier.width(6.dp))
+          Text("🗑️ Clear Part", color = StudioRed)
+        }
+      }
+    }
+  }
+}
+
+@Composable
+fun DialogueEditorCard(
+  dialogueText: String,
+  qaResult: ScriptQaResult,
+  selectedPart: Int,
+  autoPasteEnabled: Boolean,
+  autoNextPartEnabled: Boolean,
+  isBusy: Boolean,
+  onDialogueChange: (String) -> Unit,
+  onClearDialogue: () -> Unit,
+  onPasteDialogue: () -> Unit,
+  onAutoPasteToggle: (Boolean) -> Unit,
+  onAutoNextToggle: (Boolean) -> Unit,
+  onDownloadVoice: () -> Unit,
+) {
+  val charColor = if (qaResult.charCount in 4000..5000) StudioGreen else StudioAmber
+
+  Card(
+    colors = CardDefaults.cardColors(containerColor = StudioCard),
+    border = BorderStroke(1.dp, StudioOutline),
+    shape = RoundedCornerShape(16.dp),
+    modifier = Modifier.fillMaxWidth(),
+  ) {
+    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+      // Header bar + live char counter
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+      ) {
+        Text(
+          text = "Dialogue / Script Block",
+          style = MaterialTheme.typography.titleSmall,
+          color = StudioCyan,
+        )
+        Surface(
+          color = if (qaResult.charCount in 4000..5000) StudioGreenDim else StudioAmberDim,
+          shape = RoundedCornerShape(8.dp),
+        ) {
+          Text(
+            text = "Chars: ${String.format(Locale.US, "%,d", qaResult.charCount)}",
+            style = MaterialTheme.typography.labelMedium.copy(fontFamily = JetBrainsMonoFontFamily),
+            color = charColor,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+          )
+        }
+      }
+
+      // Action Toolbar: Clear + Paste + Auto-Paste + Auto-Next
+      Row(
+        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+      ) {
+        OutlinedButton(
+          onClick = onClearDialogue,
+          border = BorderStroke(1.dp, StudioOutline),
+          modifier = Modifier.heightIn(min = 48.dp).testTag("clear_dialogue_button"),
+        ) {
+          Icon(Icons.Filled.CleaningServices, contentDescription = null, modifier = Modifier.size(16.dp), tint = StudioAmber)
+          Spacer(Modifier.width(6.dp))
+          Text("🧹 Clear", color = StudioTextPrimary)
+        }
+
+        OutlinedButton(
+          onClick = onPasteDialogue,
+          border = BorderStroke(1.dp, StudioCyan.copy(alpha = 0.6f)),
+          modifier = Modifier.heightIn(min = 48.dp).testTag("paste_dialogue_button"),
+        ) {
+          Icon(Icons.Filled.ContentPaste, contentDescription = null, modifier = Modifier.size(16.dp), tint = StudioCyan)
+          Spacer(Modifier.width(6.dp))
+          Text("📋 Paste", color = StudioCyan)
+        }
+
+        Row(
+          verticalAlignment = Alignment.CenterVertically,
+          modifier =
+            Modifier.clip(RoundedCornerShape(10.dp))
+              .background(StudioCardElevated)
+              .padding(horizontal = 10.dp, vertical = 2.dp),
+        ) {
+          Icon(Icons.Filled.Bolt, contentDescription = null, modifier = Modifier.size(16.dp), tint = StudioAmber)
+          Spacer(Modifier.width(4.dp))
+          Text("Auto-Paste", style = MaterialTheme.typography.labelMedium, color = StudioTextPrimary)
+          Spacer(Modifier.width(6.dp))
+          Switch(
+            checked = autoPasteEnabled,
+            onCheckedChange = onAutoPasteToggle,
+            colors = SwitchDefaults.colors(checkedThumbColor = StudioBackground, checkedTrackColor = StudioGreen),
+            modifier = Modifier.testTag("auto_paste_switch"),
+          )
+        }
+
+        Row(
+          verticalAlignment = Alignment.CenterVertically,
+          modifier =
+            Modifier.clip(RoundedCornerShape(10.dp))
+              .background(StudioCardElevated)
+              .padding(horizontal = 10.dp, vertical = 2.dp),
+        ) {
+          Icon(Icons.Filled.SkipNext, contentDescription = null, modifier = Modifier.size(16.dp), tint = StudioCyan)
+          Spacer(Modifier.width(4.dp))
+          Text("Auto-Next", style = MaterialTheme.typography.labelMedium, color = StudioTextPrimary)
+          Spacer(Modifier.width(6.dp))
+          Switch(
+            checked = autoNextPartEnabled,
+            onCheckedChange = onAutoNextToggle,
+            colors = SwitchDefaults.colors(checkedThumbColor = StudioBackground, checkedTrackColor = StudioCyan),
+            modifier = Modifier.testTag("auto_next_switch"),
+          )
+        }
+      }
+
+      // Multiline scrollable dialogue field
+      OutlinedTextField(
+        value = dialogueText,
+        onValueChange = onDialogueChange,
+        minLines = 6,
+        maxLines = 12,
+        placeholder = {
+          Text(
+            "Paste Part $selectedPart narration script here...\nSupports [SFX: eerie wind] and [DEAD SILENCE DROP: 2.5s] cues.",
+            color = StudioTextMuted,
+          )
+        },
+        colors =
+          OutlinedTextFieldDefaults.colors(
+            focusedBorderColor = StudioCyan,
+            unfocusedBorderColor = StudioOutline,
+            focusedContainerColor = StudioCardDeep,
+            unfocusedContainerColor = StudioCardDeep,
+            focusedTextColor = StudioTextPrimary,
+            unfocusedTextColor = StudioTextPrimary,
+          ),
+        modifier = Modifier.fillMaxWidth().testTag("dialogue_text_field"),
+      )
+
+      // Live QA feedback banner
+      if (dialogueText.isNotBlank()) {
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+          qaResult.errors.forEach { err ->
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+              Icon(Icons.Filled.Warning, contentDescription = null, tint = StudioRed, modifier = Modifier.size(16.dp))
+              Text(err, style = MaterialTheme.typography.bodySmall, color = StudioRed)
+            }
+          }
+          qaResult.warnings.forEach { warn ->
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+              Icon(Icons.Filled.Warning, contentDescription = null, tint = StudioAmber, modifier = Modifier.size(16.dp))
+              Text(warn, style = MaterialTheme.typography.bodySmall, color = StudioAmber)
+            }
+          }
+        }
+      }
+
+      Button(
+        onClick = onDownloadVoice,
+        enabled = !isBusy,
+        colors =
+          ButtonDefaults.buttonColors(
+            containerColor = StudioGreen,
+            contentColor = Color(0xFF002111),
+          ),
+        modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp).testTag("download_voice_button"),
+      ) {
+        Icon(Icons.Filled.Download, contentDescription = null)
+        Spacer(Modifier.width(8.dp))
+        Text(
+          text = "▶ Download Voice (Part $selectedPart)",
+          style = MaterialTheme.typography.labelLarge,
+          fontWeight = FontWeight.Bold,
+        )
+      }
+    }
+  }
+}
+
+@Composable
+fun RenderControlsCard(
+  config: StudioConfig,
+  isBusy: Boolean,
+  onFilterSelected: (RenderFilterMode) -> Unit,
+  onPreviewFilter: () -> Unit,
+  onTurboToggle: (Boolean) -> Unit,
+  onSmartResumeToggle: (Boolean) -> Unit,
+  onSaveTransitions: (String) -> Unit,
+  onAutoCleanToggle: (Boolean) -> Unit,
+  onRequestTotalZero: () -> Unit,
+  onStartSmartRender: () -> Unit,
+) {
+  var filterDropdownExpanded by remember { mutableStateOf(false) }
+  var transitionsInput by remember(config.transitionsAfter) { mutableStateOf(config.transitionsAfter) }
+
+  Card(
+    colors = CardDefaults.cardColors(containerColor = StudioCard),
+    border = BorderStroke(1.dp, StudioOutline),
+    shape = RoundedCornerShape(16.dp),
+    modifier = Modifier.fillMaxWidth(),
+  ) {
+    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+      Text(
+        text = "RENDER PIPELINE & FILTERS",
+        style = MaterialTheme.typography.titleSmall,
+        color = StudioCyan,
+      )
+
+      // Filter Mode Dropdown + 3s Preview Button
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+      ) {
+        Box(modifier = Modifier.weight(1f)) {
+          OutlinedButton(
+            onClick = { filterDropdownExpanded = true },
+            enabled = !isBusy,
+            border = BorderStroke(1.dp, StudioOutline),
+            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("filter_mode_dropdown"),
+          ) {
+            Icon(Icons.Filled.AutoAwesome, contentDescription = null, tint = StudioCyan, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(6.dp))
+            Text(
+              text = config.filterMode.displayName,
+              color = StudioTextPrimary,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+              modifier = Modifier.weight(1f),
+            )
+            Icon(Icons.Filled.ArrowDropDown, contentDescription = "Select render filter")
+          }
+          DropdownMenu(
+            expanded = filterDropdownExpanded,
+            onDismissRequest = { filterDropdownExpanded = false },
+          ) {
+            RenderFilterMode.entries.forEach { mode ->
+              DropdownMenuItem(
+                text = { Text(mode.displayName) },
+                onClick = {
+                  onFilterSelected(mode)
+                  filterDropdownExpanded = false
+                },
+              )
+            }
+          }
+        }
+
+        FilledTonalButton(
+          onClick = onPreviewFilter,
+          enabled = !isBusy,
+          colors =
+            ButtonDefaults.filledTonalButtonColors(
+              containerColor = StudioCardElevated,
+              contentColor = StudioCyan,
+            ),
+          modifier = Modifier.heightIn(min = 48.dp).testTag("filter_preview_button"),
+        ) {
+          Icon(Icons.Filled.Visibility, contentDescription = null, modifier = Modifier.size(16.dp))
+          Spacer(Modifier.width(6.dp))
+          Text("👁️ 3s Filter Preview")
+        }
+      }
+
+      // Turbo Mode + Smart Resume switches
+      StudioSwitchRow(
+        label = "⚡ Turbo Mobile Render (Fast / Cool CPU)",
+        checked = config.turboModeEnabled,
+        enabled = !isBusy,
+        testTag = "turbo_mode_switch",
+        onCheckedChange = onTurboToggle,
+      )
+      StudioSwitchRow(
+        label = "Smart Resume (Skip matching .sig parts)",
+        checked = config.smartResumeEnabled,
+        enabled = !isBusy,
+        testTag = "smart_resume_switch",
+        onCheckedChange = onSmartResumeToggle,
+      )
+
+      // Transitions After input + Save Setting
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+      ) {
+        OutlinedTextField(
+          value = transitionsInput,
+          onValueChange = { transitionsInput = it },
+          singleLine = true,
+          label = { Text("Transitions After (e.g. 2,4,6 or ALL)") },
+          colors =
+            OutlinedTextFieldDefaults.colors(
+              focusedBorderColor = StudioCyan,
+              unfocusedBorderColor = StudioOutline,
+              focusedTextColor = StudioTextPrimary,
+              unfocusedTextColor = StudioTextPrimary,
+            ),
+          modifier = Modifier.weight(1f).testTag("transitions_after_input"),
+        )
+        FilledTonalButton(
+          onClick = { onSaveTransitions(transitionsInput) },
+          colors =
+            ButtonDefaults.filledTonalButtonColors(
+              containerColor = StudioCyanDim,
+              contentColor = StudioCyan,
+            ),
+          modifier = Modifier.heightIn(min = 48.dp).testTag("save_transitions_button"),
+        ) {
+          Text("Save Setting")
+        }
+      }
+
+      StudioSwitchRow(
+        label = "Auto-clean temp workspace after export",
+        checked = config.autoCleanAfterExport,
+        enabled = !isBusy,
+        testTag = "auto_clean_switch",
+        onCheckedChange = onAutoCleanToggle,
+      )
+
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+      ) {
+        OutlinedButton(
+          onClick = onRequestTotalZero,
+          enabled = !isBusy,
+          border = BorderStroke(1.dp, StudioRed.copy(alpha = 0.6f)),
+          modifier = Modifier.weight(1f).heightIn(min = 50.dp).testTag("clear_workspace_total_zero_button"),
+        ) {
+          Text("🧹 Clear Workspace (TOTAL ZERO)", color = StudioRed, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+      }
+
+      Button(
+        onClick = onStartSmartRender,
+        enabled = !isBusy,
+        colors =
+          ButtonDefaults.buttonColors(
+            containerColor = StudioCyan,
+            contentColor = Color(0xFF002022),
+          ),
+        modifier = Modifier.fillMaxWidth().heightIn(min = 54.dp).testTag("smart_render_button"),
+      ) {
+        Icon(Icons.Filled.RocketLaunch, contentDescription = null)
+        Spacer(Modifier.width(8.dp))
+        Text(
+          text = "🚀 1-Click Smart Render",
+          style = MaterialTheme.typography.titleSmall,
+          fontWeight = FontWeight.Bold,
+        )
+      }
+    }
+  }
+}
+
+@Composable
+private fun StudioSwitchRow(
+  label: String,
+  checked: Boolean,
+  enabled: Boolean,
+  testTag: String,
+  onCheckedChange: (Boolean) -> Unit,
+) {
+  Row(
+    modifier = Modifier.fillMaxWidth(),
+    horizontalArrangement = Arrangement.SpaceBetween,
+    verticalAlignment = Alignment.CenterVertically,
+  ) {
+    Text(
+      text = label,
+      style = MaterialTheme.typography.bodyMedium,
+      color = StudioTextPrimary,
+      modifier = Modifier.weight(1f).padding(end = 8.dp),
+    )
+    Switch(
+      checked = checked,
+      onCheckedChange = onCheckedChange,
+      enabled = enabled,
+      colors = SwitchDefaults.colors(checkedThumbColor = StudioBackground, checkedTrackColor = StudioGreen),
+      modifier = Modifier.testTag(testTag),
+    )
+  }
+}
+
+@Composable
+fun ProgressAndLogCard(
+  progress: PipelineProgress,
+  logs: List<LogEntry>,
+  onCancel: () -> Unit,
+  onClearLogs: () -> Unit,
+) {
+  val logScrollState = rememberScrollState()
+  LaunchedEffect(logs.size) {
+    logScrollState.animateScrollTo(logScrollState.maxValue)
+  }
+
+  Card(
+    colors = CardDefaults.cardColors(containerColor = StudioCard),
+    border = BorderStroke(1.dp, StudioOutline),
+    shape = RoundedCornerShape(16.dp),
+    modifier = Modifier.fillMaxWidth(),
+  ) {
+    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+      ) {
+        Text(
+          text = if (progress.isRunning) "${progress.taskTitle} • ${progress.progressPercent}%" else "PROGRESS & SYSTEM LOG",
+          style = MaterialTheme.typography.titleSmall,
+          color = if (progress.isRunning) StudioAmber else StudioCyan,
+        )
+        if (progress.etaText.isNotBlank() && progress.isRunning) {
+          Text(
+            text = "ETA: ${progress.etaText}",
+            style = MaterialTheme.typography.labelMedium.copy(fontFamily = JetBrainsMonoFontFamily),
+            color = StudioAmber,
+          )
+        }
+      }
+
+      // Live Progress Bar + visible Red Cancel Button directly next to it
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+      ) {
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+          LinearProgressIndicator(
+            progress = { (progress.progressPercent.coerceIn(0, 100)) / 100f },
+            color = if (progress.isRunning) StudioCyan else StudioGreen,
+            trackColor = StudioCardElevated,
+            modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
+          )
+          if (progress.stepText.isNotBlank()) {
+            Text(
+              text = progress.stepText,
+              style = MaterialTheme.typography.bodySmall,
+              color = StudioTextSecondary,
+              maxLines = 2,
+              overflow = TextOverflow.Ellipsis,
+            )
+          }
+        }
+
+        if (progress.isRunning) {
+          Button(
+            onClick = onCancel,
+            colors =
+              ButtonDefaults.buttonColors(
+                containerColor = StudioRed,
+                contentColor = Color.White,
+              ),
+            modifier = Modifier.heightIn(min = 48.dp).testTag("cancel_pipeline_button"),
+          ) {
+            Text("⏹ Cancel", fontWeight = FontWeight.Bold)
+          }
+        }
+      }
+
+      HorizontalDivider(color = StudioOutline.copy(alpha = 0.6f))
+
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+      ) {
+        Text(
+          text = "Live System Log (${logs.size})",
+          style = MaterialTheme.typography.labelMedium,
+          color = StudioTextSecondary,
+        )
+        TextButton(onClick = onClearLogs, modifier = Modifier.testTag("clear_logs_button")) {
+          Text("Clear Log", color = StudioTextSecondary)
+        }
+      }
+
+      Box(
+        modifier =
+          Modifier.fillMaxWidth()
+            .height(170.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(StudioCardDeep)
+            .padding(10.dp)
+            .verticalScroll(logScrollState)
+      ) {
+        if (logs.isEmpty()) {
+          Text(
+            text = "No log events yet.",
+            style = MaterialTheme.typography.bodySmall.copy(fontFamily = JetBrainsMonoFontFamily),
+            color = StudioTextMuted,
+          )
+        } else {
+          Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            logs.forEach { entry ->
+              val color =
+                when (entry.level) {
+                  LogLevel.INFO -> StudioTextSecondary
+                  LogLevel.SUCCESS -> StudioGreen
+                  LogLevel.WARNING -> StudioAmber
+                  LogLevel.ERROR -> StudioRed
+                }
+              Text(
+                text = "[${entry.timestamp}] ${entry.message}",
+                style = MaterialTheme.typography.labelSmall.copy(fontFamily = JetBrainsMonoFontFamily),
+                color = color,
+              )
+            }
+          }
+        }
+      }
+    }
+  }
+}

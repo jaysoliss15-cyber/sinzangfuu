@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name">Missing Page</string>
+    <string name="studio_header_title">The Missing Page - S-Tier Studio</string>
+    <string name="nav_studio">Studio</string>
+    <string name="nav_media_hub">Media Hub</string>
+    <string name="nav_api_settings">API &amp; Settings</string>
+    <string name="notif_channel_render">Studio Background Pipeline</string>
+    <string name="notif_channel_render_desc">Live progress notifications for ElevenLabs voice downloads and FFmpeg renders.</string>
+</resources>

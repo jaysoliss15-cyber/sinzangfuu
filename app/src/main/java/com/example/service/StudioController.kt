@@ -1,0 +1,664 @@
+package com.example.service
+
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import androidx.core.content.ContextCompat
+import com.example.data.AssetSlotStatus
+import com.example.data.AudioPipelineProcessor
+import com.example.data.ElevenLabsClient
+import com.example.data.FfmpegExecutor
+import com.example.data.LogEntry
+import com.example.data.LogLevel
+import com.example.data.LowStorageWarning
+import com.example.data.MediaFileInfo
+import com.example.data.MediaHubState
+import com.example.data.PartStatus
+import com.example.data.PipelineProgress
+import com.example.data.PreviewPlayerTarget
+import com.example.data.RenderFilterMode
+import com.example.data.ScriptQaResult
+import com.example.data.StudioConfig
+import com.example.data.StudioConfigRepository
+import com.example.data.StudioFileManager
+import com.example.data.StudioRunStatus
+import com.example.data.SubscriptionInfo
+import com.example.data.VideoRenderPipeline
+import com.example.domain.ScriptValidator
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+
+class StudioController(private val appContext: Context) {
+  val configRepo = StudioConfigRepository(appContext)
+  val fileManager = StudioFileManager(appContext)
+  val ffmpegExecutor = FfmpegExecutor(appContext)
+  val elevenLabsClient = ElevenLabsClient()
+  private val audioProcessor = AudioPipelineProcessor(fileManager, elevenLabsClient, ffmpegExecutor)
+  private val videoPipeline = VideoRenderPipeline(fileManager, ffmpegExecutor)
+
+  private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+  private var activeJob: Job? = null
+
+  private val _config = MutableStateFlow(configRepo.load())
+  val config: StateFlow<StudioConfig> = _config.asStateFlow()
+
+  private val _partStatuses = MutableStateFlow<List<PartStatus>>(emptyList())
+  val partStatuses: StateFlow<List<PartStatus>> = _partStatuses.asStateFlow()
+
+  private val _mediaHubState = MutableStateFlow(MediaHubState())
+  val mediaHubState: StateFlow<MediaHubState> = _mediaHubState.asStateFlow()
+
+  private val _dialogueText = MutableStateFlow("")
+  val dialogueText: StateFlow<String> = _dialogueText.asStateFlow()
+
+  private val _qaResult = MutableStateFlow(ScriptValidator.validateScript(""))
+  val qaResult: StateFlow<ScriptQaResult> = _qaResult.asStateFlow()
+
+  private val _runStatus = MutableStateFlow(StudioRunStatus.READY)
+  val runStatus: StateFlow<StudioRunStatus> = _runStatus.asStateFlow()
+
+  private val _progress = MutableStateFlow(PipelineProgress())
+  val progress: StateFlow<PipelineProgress> = _progress.asStateFlow()
+
+  private val _logs = MutableStateFlow<List<LogEntry>>(emptyList())
+  val logs: StateFlow<List<LogEntry>> = _logs.asStateFlow()
+
+  private val _subscriptionInfo = MutableStateFlow<SubscriptionInfo?>(null)
+  val subscriptionInfo: StateFlow<SubscriptionInfo?> = _subscriptionInfo.asStateFlow()
+
+  private val _isCheckingSubscription = MutableStateFlow(false)
+  val isCheckingSubscription: StateFlow<Boolean> = _isCheckingSubscription.asStateFlow()
+
+  private val _previewTarget = MutableStateFlow<PreviewPlayerTarget?>(null)
+  val previewTarget: StateFlow<PreviewPlayerTarget?> = _previewTarget.asStateFlow()
+
+  private val _lowStorageWarning = MutableStateFlow<LowStorageWarning?>(null)
+  val lowStorageWarning: StateFlow<LowStorageWarning?> = _lowStorageWarning.asStateFlow()
+
+  private val _snackbarEvent = MutableStateFlow<Pair<String, String?>?>(null)
+  val snackbarEvent: StateFlow<Pair<String, String?>?> = _snackbarEvent.asStateFlow()
+
+  private var lastClearedDialogueBackup: String? = null
+
+  init {
+    fileManager.ensurePartFolders(_config.value.partCount)
+    refreshWorkspaceAndMediaHub()
+    appendLog("Studio initialized. Native FFmpeg ready: ${ffmpegExecutor.areBinariesAvailable()}", LogLevel.INFO)
+  }
+
+  fun refreshWorkspaceAndMediaHub() {
+    val cfg = _config.value
+    _partStatuses.value = fileManager.getPartStatuses(cfg.partCount)
+    scope.launch(Dispatchers.IO) {
+      val stockFiles = fileManager.listStockLoops()
+      val stockInfos =
+        stockFiles.map { f ->
+          MediaFileInfo(
+            name = f.name,
+            filePath = f.absolutePath,
+            sizeBytes = f.length(),
+            durationSeconds = ffmpegExecutor.probeDurationSeconds(f),
+          )
+        }
+
+      val transFile = fileManager.transitionFile
+      val transLoaded = transFile.exists() && transFile.length() > 0L
+      val transStatus =
+        if (transLoaded) {
+          AssetSlotStatus(
+            isLoaded = true,
+            displayName = cfg.transitionOriginalName.ifBlank { transFile.name },
+            filePath = transFile.absolutePath,
+            durationSeconds = ffmpegExecutor.probeDurationSeconds(transFile),
+            sizeBytes = transFile.length(),
+          )
+        } else {
+          AssetSlotStatus(false, "Not Set")
+        }
+
+      val bgmFile = fileManager.bgmFile
+      val bgmLoaded = bgmFile.exists() && bgmFile.length() > 0L
+      val bgmStatus =
+        if (bgmLoaded) {
+          AssetSlotStatus(
+            isLoaded = true,
+            displayName = cfg.bgmOriginalName.ifBlank { bgmFile.name },
+            filePath = bgmFile.absolutePath,
+            durationSeconds = ffmpegExecutor.probeDurationSeconds(bgmFile),
+            sizeBytes = bgmFile.length(),
+          )
+        } else {
+          AssetSlotStatus(false, "Not Set")
+        }
+
+      val outroFile = fileManager.outroFile
+      val outroLoaded = outroFile.exists() && outroFile.length() > 0L
+      val outroStatus =
+        if (outroLoaded) {
+          AssetSlotStatus(
+            isLoaded = true,
+            displayName = cfg.outroOriginalName.ifBlank { outroFile.name },
+            filePath = outroFile.absolutePath,
+            durationSeconds = ffmpegExecutor.probeDurationSeconds(outroFile),
+            sizeBytes = outroFile.length(),
+          )
+        } else {
+          AssetSlotStatus(false, "Not Set")
+        }
+
+      val finishedInfos =
+        fileManager.listFinishedOutputs().map { f ->
+          MediaFileInfo(
+            name = f.name,
+            filePath = f.absolutePath,
+            sizeBytes = f.length(),
+            durationSeconds = ffmpegExecutor.probeDurationSeconds(f),
+          )
+        }
+
+      _mediaHubState.value =
+        MediaHubState(
+          stockLoops = stockInfos,
+          transitionAsset = transStatus,
+          bgmAsset = bgmStatus,
+          outroAsset = outroStatus,
+          tempCacheBytes = fileManager.getWorkspaceSizeBytes(),
+          finishedVideos = finishedInfos,
+        )
+    }
+  }
+
+  fun updateConfig(transform: (StudioConfig) -> StudioConfig) {
+    val updated = transform(_config.value)
+    _config.value = updated
+    configRepo.save(updated)
+  }
+
+  fun updatePartFolders(newCount: Int) {
+    val clamped = newCount.coerceIn(1, 30)
+    fileManager.ensurePartFolders(clamped)
+    updateConfig { cfg ->
+      cfg.copy(
+        partCount = clamped,
+        selectedPart = cfg.selectedPart.coerceIn(1, clamped),
+      )
+    }
+    refreshWorkspaceAndMediaHub()
+    appendLog("Updated episode workspace to $clamped part folder(s).", LogLevel.SUCCESS)
+    emitSnackbar("Updated workspace to $clamped parts")
+  }
+
+  fun selectPart(partNumber: Int) {
+    val clamped = partNumber.coerceIn(1, _config.value.partCount)
+    updateConfig { it.copy(selectedPart = clamped) }
+  }
+
+  fun setDialogueText(text: String, runLogQa: Boolean = false) {
+    _dialogueText.value = text
+    val qa = ScriptValidator.validateScript(text)
+    _qaResult.value = qa
+    if (runLogQa && text.isNotBlank()) {
+      qa.errors.forEach { appendLog("QA ERROR: $it", LogLevel.ERROR) }
+      qa.warnings.forEach { appendLog("QA WARN: $it", LogLevel.WARNING) }
+      if (qa.isValid) {
+        appendLog("QA passed (${qa.charCount} speech chars, ${qa.sfxCount} SFX, ${qa.silenceCount} silence).", LogLevel.SUCCESS)
+      }
+    }
+  }
+
+  fun clearDialogueWithUndo() {
+    lastClearedDialogueBackup = _dialogueText.value
+    setDialogueText("")
+    _snackbarEvent.value = "Dialogue cleared" to "Undo"
+  }
+
+  fun undoDialogueRestore() {
+    val backup = lastClearedDialogueBackup ?: return
+    setDialogueText(backup, runLogQa = true)
+    lastClearedDialogueBackup = null
+  }
+
+  fun clearSnackbar() {
+    _snackbarEvent.value = null
+  }
+
+  fun emitSnackbar(message: String, actionLabel: String? = null) {
+    _snackbarEvent.value = message to actionLabel
+  }
+
+  fun appendLog(message: String, level: LogLevel = LogLevel.INFO) {
+    val ts = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date())
+    _logs.update { current -> (current + LogEntry(ts, message, level)).takeLast(300) }
+  }
+
+  fun clearLogs() {
+    _logs.value = emptyList()
+  }
+
+  fun startDownloadVoice() {
+    if (activeJob?.isActive == true) {
+      emitSnackbar("Another studio task is currently running.")
+      return
+    }
+    val rawText = _dialogueText.value
+    val qa = ScriptValidator.validateScript(rawText)
+    _qaResult.value = qa
+    qa.errors.forEach { appendLog("QA ERROR: $it", LogLevel.ERROR) }
+    qa.warnings.forEach { appendLog("QA WARN: $it", LogLevel.WARNING) }
+
+    if (!qa.isValid) {
+      _runStatus.value = StudioRunStatus.ERROR
+      emitSnackbar(qa.errors.firstOrNull() ?: "Script QA failed.")
+      return
+    }
+    val cfg = _config.value
+    if (cfg.apiKey.isBlank()) {
+      _runStatus.value = StudioRunStatus.ERROR
+      appendLog("ElevenLabs API Key missing. Go to API & Settings tab.", LogLevel.ERROR)
+      emitSnackbar("Missing ElevenLabs API Key in API & Settings")
+      return
+    }
+
+    val targetPart = cfg.selectedPart
+    launchForegroundTask("Voice Download (Part $targetPart)") {
+      audioProcessor.processPartVoice(
+        partNumber = targetPart,
+        qaResult = qa,
+        config = cfg,
+        onProgress = { pct, step, eta ->
+          _progress.value =
+            PipelineProgress(
+              isRunning = true,
+              taskTitle = "Downloading Voice (Part $targetPart)",
+              progressPercent = pct,
+              stepText = step,
+              etaText = eta,
+            )
+        },
+        onLog = ::appendLog,
+      )
+
+      refreshWorkspaceAndMediaHub()
+      if (_config.value.autoNextPartEnabled) {
+        setDialogueText("")
+        val nextPart = (targetPart + 1).coerceAtMost(_config.value.partCount)
+        if (nextPart != targetPart) {
+          selectPart(nextPart)
+          appendLog("Auto-Next Part: cleared dialogue and switched to Part $nextPart.", LogLevel.INFO)
+        } else {
+          appendLog("Auto-Next Part: cleared dialogue on final Part $targetPart.", LogLevel.INFO)
+        }
+      }
+      emitSnackbar("Part $targetPart voice ready")
+    }
+  }
+
+  fun startFilterPreview() {
+    if (activeJob?.isActive == true) {
+      emitSnackbar("Another studio task is currently running.")
+      return
+    }
+    val cfg = _config.value
+    launchForegroundTask("3s Filter Preview (${cfg.filterMode.displayName})") {
+      val previewFile =
+        videoPipeline.renderFilterPreview(
+          partNumber = cfg.selectedPart,
+          filterMode = cfg.filterMode,
+          onProgress = { pct, step, eta ->
+            _progress.value =
+              PipelineProgress(
+                isRunning = true,
+                taskTitle = "3s Filter Preview",
+                progressPercent = pct,
+                stepText = step,
+                etaText = eta,
+              )
+          },
+          onLog = ::appendLog,
+        )
+      _previewTarget.value =
+        PreviewPlayerTarget(
+          title = "3s Preview — ${cfg.filterMode.displayName}",
+          filePath = previewFile.absolutePath,
+        )
+    }
+  }
+
+  fun requestSmartRender(ignoreLowStorage: Boolean = false) {
+    if (activeJob?.isActive == true) {
+      emitSnackbar("Another studio task is currently running.")
+      return
+    }
+    if (!ignoreLowStorage) {
+      val freeGb = fileManager.getFreeStorageGb()
+      if (freeGb < 3.0) {
+        _lowStorageWarning.value = LowStorageWarning(freeGb)
+        return
+      }
+    }
+    _lowStorageWarning.value = null
+    val cfg = _config.value
+    launchForegroundTask("1-Click Smart Render") {
+      val finalVideo =
+        videoPipeline.renderFullDocumentary(
+          config = cfg,
+          onProgress = { pct, step, eta ->
+            _progress.value =
+              PipelineProgress(
+                isRunning = true,
+                taskTitle = "Smart Render",
+                progressPercent = pct,
+                stepText = step,
+                etaText = eta,
+              )
+          },
+          onLog = ::appendLog,
+        )
+      refreshWorkspaceAndMediaHub()
+      emitSnackbar("Render complete: ${finalVideo.name}")
+    }
+  }
+
+  fun dismissLowStorageWarning() {
+    _lowStorageWarning.value = null
+  }
+
+  fun openPreviewPlayer(title: String, filePath: String) {
+    _previewTarget.value = PreviewPlayerTarget(title, filePath)
+  }
+
+  fun closePreviewPlayer() {
+    _previewTarget.value = null
+  }
+
+  fun cancelActiveTask() {
+    val job = activeJob
+    if (job == null || !job.isActive) return
+    appendLog("Cancellation requested — halting FFmpeg & active pipeline...", LogLevel.WARNING)
+    ffmpegExecutor.cancelCurrentProcess()
+    job.cancel()
+    _runStatus.value = StudioRunStatus.CANCELLED
+    _progress.value =
+      PipelineProgress(
+        isRunning = false,
+        taskTitle = "Cancelled",
+        progressPercent = 0,
+        stepText = "Cancelled by user",
+        etaText = "",
+      )
+    stopRenderService()
+    refreshWorkspaceAndMediaHub()
+    emitSnackbar("Task cancelled")
+  }
+
+  private fun launchForegroundTask(
+    title: String,
+    block: suspend () -> Unit,
+  ) {
+    ffmpegExecutor.resetCancellationFlag()
+    _runStatus.value = StudioRunStatus.BUSY
+    _progress.value =
+      PipelineProgress(
+        isRunning = true,
+        taskTitle = title,
+        progressPercent = 1,
+        stepText = "Starting $title...",
+        etaText = "Calculating...",
+      )
+    startRenderService()
+
+    activeJob =
+      scope.launch {
+        try {
+          block()
+          _runStatus.value = StudioRunStatus.DONE
+          _progress.update { it.copy(isRunning = false, progressPercent = 100) }
+        } catch (_: CancellationException) {
+          _runStatus.value = StudioRunStatus.CANCELLED
+          _progress.value =
+            PipelineProgress(
+              isRunning = false,
+              taskTitle = "Cancelled",
+              progressPercent = 0,
+              stepText = "Cancelled",
+              etaText = "",
+            )
+          appendLog("Task cancelled.", LogLevel.WARNING)
+        } catch (e: Exception) {
+          val msg = e.message ?: "Unknown pipeline error"
+          _runStatus.value = StudioRunStatus.ERROR
+          _progress.update {
+            it.copy(isRunning = false, stepText = msg, etaText = "")
+          }
+          appendLog("ERROR: $msg", LogLevel.ERROR)
+          emitSnackbar(msg)
+        } finally {
+          stopRenderService()
+          refreshWorkspaceAndMediaHub()
+        }
+      }
+  }
+
+  private fun startRenderService() {
+    val intent = Intent(appContext, StudioRenderService::class.java)
+    ContextCompat.startForegroundService(appContext, intent)
+  }
+
+  private fun stopRenderService() {
+    val intent =
+      Intent(appContext, StudioRenderService::class.java).apply {
+        action = StudioRenderService.ACTION_STOP_SERVICE
+      }
+    runCatching { appContext.startService(intent) }
+  }
+
+  fun checkSubscriptionCredits() {
+    val key = _config.value.apiKey.trim()
+    if (key.isEmpty()) {
+      _subscriptionInfo.value = SubscriptionInfo(errorMessage = "Enter and save an API Key first.")
+      return
+    }
+    scope.launch {
+      _isCheckingSubscription.value = true
+      val info = elevenLabsClient.fetchSubscriptionInfo(key)
+      _subscriptionInfo.value = info
+      _isCheckingSubscription.value = false
+      if (info.errorMessage != null) {
+        appendLog("Credits check failed: ${info.errorMessage}", LogLevel.ERROR)
+      } else {
+        appendLog(
+          "ElevenLabs Credits: ${info.remainingCharacters} remaining (${info.characterCount}/${info.characterLimit}, tier: ${info.tier}).",
+          LogLevel.SUCCESS,
+        )
+      }
+    }
+  }
+
+  // Per-part and Media Hub operations
+  fun importPartVideo(partNum: Int, uri: Uri) {
+    scope.launch(Dispatchers.IO) {
+      runCatching {
+        val file = fileManager.copyPartVideoOverride(partNum, uri)
+        appendLog("Part $partNum video override saved: ${file.name}", LogLevel.SUCCESS)
+        refreshWorkspaceAndMediaHub()
+        emitSnackbar("Part $partNum video loaded")
+      }.onFailure {
+        appendLog("Failed to import Part $partNum video: ${it.message}", LogLevel.ERROR)
+        emitSnackbar(it.message ?: "Failed to import video")
+      }
+    }
+  }
+
+  fun importPartAudio(partNum: Int, uri: Uri) {
+    scope.launch(Dispatchers.IO) {
+      runCatching {
+        val file = fileManager.copyPartAudioOverride(partNum, uri)
+        appendLog("Part $partNum audio override saved: ${file.name}", LogLevel.SUCCESS)
+        refreshWorkspaceAndMediaHub()
+        emitSnackbar("Part $partNum audio loaded")
+      }.onFailure {
+        appendLog("Failed to import Part $partNum audio: ${it.message}", LogLevel.ERROR)
+        emitSnackbar(it.message ?: "Failed to import audio")
+      }
+    }
+  }
+
+  fun importDialogueTxt(uri: Uri) {
+    scope.launch(Dispatchers.IO) {
+      runCatching {
+        val text = fileManager.readUtf8Text(uri)
+        launch(Dispatchers.Main) {
+          setDialogueText(text, runLogQa = true)
+          emitSnackbar("Loaded script (${text.length} chars)")
+        }
+      }.onFailure {
+        appendLog("Failed to load .txt script: ${it.message}", LogLevel.ERROR)
+        emitSnackbar(it.message ?: "Failed to read .txt")
+      }
+    }
+  }
+
+  fun clearSelectedPart(partNum: Int) {
+    fileManager.clearPart(partNum)
+    refreshWorkspaceAndMediaHub()
+    appendLog("Cleared Part $partNum audio/video overrides.", LogLevel.INFO)
+    emitSnackbar("Part $partNum cleared")
+  }
+
+  fun clearWorkspaceTotalZero() {
+    fileManager.clearWorkspaceTotalZero(_config.value.partCount)
+    refreshWorkspaceAndMediaHub()
+    appendLog("TOTAL ZERO: Wiped episode_workspace/ and workspace/ (stock_loops & assets preserved).", LogLevel.WARNING)
+    emitSnackbar("Workspace cleared (Stock & Assets kept)")
+  }
+
+  fun addStockLoops(uris: List<Uri>) {
+    if (uris.isEmpty()) return
+    scope.launch(Dispatchers.IO) {
+      var added = 0
+      uris.forEach { uri ->
+        runCatching {
+          val file = fileManager.addStockLoop(uri)
+          added++
+          appendLog("Added stock loop: ${file.name}", LogLevel.SUCCESS)
+        }.onFailure {
+          appendLog("Failed to add stock loop: ${it.message}", LogLevel.ERROR)
+        }
+      }
+      refreshWorkspaceAndMediaHub()
+      emitSnackbar("Added $added stock loop(s)")
+    }
+  }
+
+  fun deleteStockLoop(filePath: String) {
+    val file = File(filePath)
+    if (file.delete()) {
+      appendLog("Deleted stock loop: ${file.name}", LogLevel.INFO)
+      refreshWorkspaceAndMediaHub()
+    }
+  }
+
+  fun setTransitionBroll(uri: Uri) {
+    scope.launch(Dispatchers.IO) {
+      runCatching {
+        val origName = fileManager.setTransitionAsset(uri)
+        updateConfig { it.copy(transitionOriginalName = origName) }
+        appendLog("Loaded Next Page transition B-roll: $origName", LogLevel.SUCCESS)
+        refreshWorkspaceAndMediaHub()
+        emitSnackbar("Transition B-roll loaded")
+      }.onFailure {
+        appendLog("Failed to load transition B-roll: ${it.message}", LogLevel.ERROR)
+      }
+    }
+  }
+
+  fun removeTransitionBroll() {
+    fileManager.removeTransitionAsset()
+    updateConfig { it.copy(transitionOriginalName = "") }
+    appendLog("Removed Next Page transition B-roll.", LogLevel.INFO)
+    refreshWorkspaceAndMediaHub()
+  }
+
+  fun setBgm(uri: Uri) {
+    scope.launch(Dispatchers.IO) {
+      runCatching {
+        val origName = fileManager.setBgmAsset(uri)
+        updateConfig { it.copy(bgmOriginalName = origName) }
+        appendLog("Loaded Background Music: $origName", LogLevel.SUCCESS)
+        refreshWorkspaceAndMediaHub()
+        emitSnackbar("BGM loaded")
+      }.onFailure {
+        appendLog("Failed to load BGM: ${it.message}", LogLevel.ERROR)
+      }
+    }
+  }
+
+  fun removeBgm() {
+    fileManager.removeBgmAsset()
+    updateConfig { it.copy(bgmOriginalName = "") }
+    appendLog("Removed Background Music.", LogLevel.INFO)
+    refreshWorkspaceAndMediaHub()
+  }
+
+  fun setOutro(uri: Uri) {
+    scope.launch(Dispatchers.IO) {
+      runCatching {
+        val origName = fileManager.setOutroAsset(uri)
+        updateConfig { it.copy(outroOriginalName = origName) }
+        appendLog("Loaded Outro Vanity Card: $origName", LogLevel.SUCCESS)
+        refreshWorkspaceAndMediaHub()
+        emitSnackbar("Outro card loaded")
+      }.onFailure {
+        appendLog("Failed to load Outro card: ${it.message}", LogLevel.ERROR)
+      }
+    }
+  }
+
+  fun removeOutro() {
+    fileManager.removeOutroAsset()
+    updateConfig { it.copy(outroOriginalName = "") }
+    appendLog("Removed Outro Vanity Card.", LogLevel.INFO)
+    refreshWorkspaceAndMediaHub()
+  }
+
+  fun cleanTempCache() {
+    fileManager.cleanTempWorkspaceOnly()
+    appendLog("Cleaned temp workspace/ cache.", LogLevel.INFO)
+    refreshWorkspaceAndMediaHub()
+    emitSnackbar("Temp cache cleaned")
+  }
+
+  fun saveFinishedVideoToGallery(filePath: String) {
+    scope.launch(Dispatchers.IO) {
+      runCatching {
+        val file = File(filePath)
+        fileManager.saveVideoToGallery(file)
+        appendLog("Saved to Gallery: Movies/TheMissingPage/${file.name}", LogLevel.SUCCESS)
+        emitSnackbar("Saved to Movies/TheMissingPage")
+      }.onFailure {
+        appendLog("Gallery save failed: ${it.message}", LogLevel.ERROR)
+        emitSnackbar(it.message ?: "Save failed")
+      }
+    }
+  }
+
+  fun deleteFinishedVideo(filePath: String) {
+    val file = File(filePath)
+    if (file.delete()) {
+      appendLog("Deleted finished output: ${file.name}", LogLevel.INFO)
+      refreshWorkspaceAndMediaHub()
+    }
+  }
+}

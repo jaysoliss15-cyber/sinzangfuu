@@ -1,0 +1,8 @@
+{
+  "name": "The Missing Page - S-Tier Studio",
+  "description": "Standalone Android documentary video and ElevenLabs voice synthesis studio with FFmpeg camouflage, smart resume, and zero-explorer in-app Media Hub.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

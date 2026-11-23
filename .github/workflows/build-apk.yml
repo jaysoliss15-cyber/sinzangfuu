@@ -1,0 +1,116 @@
+name: Build The Missing Page Studio APK
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Configure Android SDK & Licenses
+        shell: bash
+        run: |
+          set +o pipefail
+          SDK_DIR="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          echo "ANDROID_HOME=$SDK_DIR" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK_DIR" >> "$GITHUB_ENV"
+          mkdir -p "$SDK_DIR/licenses"
+          SDKMANAGER=$(find "$SDK_DIR/cmdline-tools" -name "sdkmanager" -type f 2>/dev/null | head -n 1)
+          if [ -n "$SDKMANAGER" ]; then
+            yes | "$SDKMANAGER" --sdk_root="$SDK_DIR" --licenses >/dev/null || true
+          fi
+
+      - name: Set up Gradle 9.3.1
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.3.1'
+
+      - name: Prepare static arm64-v8a FFmpeg & FFprobe native binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          JNI_DIR="app/src/main/jniLibs/arm64-v8a"
+          FFMPEG_SO="$JNI_DIR/libffmpeg.so"
+          FFPROBE_SO="$JNI_DIR/libffprobe.so"
+          mkdir -p "$JNI_DIR"
+
+          if [ ! -s "$FFMPEG_SO" ] || [ ! -s "$FFPROBE_SO" ]; then
+            echo "Static arm64 FFmpeg binaries missing; fetching..."
+            if command -v docker >/dev/null 2>&1; then
+              if docker pull --platform linux/arm64 mwader/static-ffmpeg:latest; then
+                docker rm -f static-ffmpeg-extract >/dev/null 2>&1 || true
+                docker create --platform linux/arm64 --name static-ffmpeg-extract mwader/static-ffmpeg:latest /bin/true
+                docker cp static-ffmpeg-extract:/ffmpeg "$FFMPEG_SO"
+                docker cp static-ffmpeg-extract:/ffprobe "$FFPROBE_SO"
+                docker rm -f static-ffmpeg-extract >/dev/null 2>&1 || true
+              fi
+            fi
+
+            if [ ! -s "$FFMPEG_SO" ] || [ ! -s "$FFPROBE_SO" ]; then
+              echo "Falling back to John Van Sickle static arm64 release archive..."
+              TMP_DIR=$(mktemp -d)
+              curl -fsSL "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-arm64-static.tar.xz" -o "$TMP_DIR/ffmpeg.tar.xz"
+              tar -xJf "$TMP_DIR/ffmpeg.tar.xz" -C "$TMP_DIR"
+              FOUND_FFMPEG=$(find "$TMP_DIR" -type f -name "ffmpeg" | head -n 1)
+              FOUND_FFPROBE=$(find "$TMP_DIR" -type f -name "ffprobe" | head -n 1)
+              cp "$FOUND_FFMPEG" "$FFMPEG_SO"
+              cp "$FOUND_FFPROBE" "$FFPROBE_SO"
+              rm -rf "$TMP_DIR"
+            fi
+          fi
+
+          chmod 755 "$FFMPEG_SO" "$FFPROBE_SO"
+
+          for BIN in "$FFMPEG_SO" "$FFPROBE_SO"; do
+            if [ ! -s "$BIN" ]; then
+              echo "ERROR: $BIN is missing or empty"
+              exit 1
+            fi
+            INFO=$(file "$BIN")
+            echo "$BIN -> $INFO"
+            if ! echo "$INFO" | grep -qi "ELF 64-bit"; then
+              echo "ERROR: $BIN is not ELF 64-bit"
+              exit 1
+            fi
+            if ! echo "$INFO" | grep -qiE "aarch64|arm aarch64"; then
+              echo "ERROR: $BIN is not ARM64/aarch64"
+              exit 1
+            fi
+            if ! echo "$INFO" | grep -qiE "statically linked|static-pie linked"; then
+              echo "ERROR: $BIN is not statically linked"
+              exit 1
+            fi
+          done
+
+      - name: Prepare debug keystore
+        run: |
+          if [ -f debug.keystore.base64 ]; then
+            base64 -d debug.keystore.base64 > debug.keystore
+          else
+            keytool -genkeypair -v -keystore debug.keystore \
+              -storepass android -alias androiddebugkey -keypass android \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
+
+      - name: Build Debug APK
+        run: gradle assembleDebug --no-daemon
+
+      - name: Upload Missing Page Studio APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MissingPageStudio-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
