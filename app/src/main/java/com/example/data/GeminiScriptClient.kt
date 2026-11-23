@@ -6,7 +6,12 @@ import com.example.domain.StrictCleanDialogueSanitizer
 import com.google.firebase.Firebase
 import com.google.firebase.ai.ai
 import com.google.firebase.ai.type.content
+import java.io.File
 import java.io.IOException
+import java.net.SocketTimeoutException
+import java.net.URLEncoder
+import java.net.UnknownHostException
+import java.util.Locale
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -30,6 +35,7 @@ data class GeminiScriptAuditOutcome(
 )
 
 class GeminiScriptClient(
+  private val godPromptFile: File? = null,
   private val generateRawOverride: (suspend (String) -> String)? = null,
   private val delayFn: suspend (Long) -> Unit = { ms -> delay(ms) },
 ) {
@@ -43,13 +49,126 @@ class GeminiScriptClient(
 
   private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
 
+  suspend fun fetchAvailableModels(
+    provider: LlmProvider,
+    baseUrl: String,
+    apiKey: String,
+  ): List<String> {
+    val cleanKey = apiKey.trim()
+    val cleanBase = normalizeBaseUrl(provider, baseUrl)
+
+    return try {
+      withTimeout(MODEL_FETCH_TIMEOUT_MS) {
+        withContext(Dispatchers.IO) {
+          currentCoroutineContext().ensureActive()
+          when (provider) {
+            LlmProvider.GEMINI -> {
+              if (cleanKey.isEmpty()) {
+                throw IllegalArgumentException(
+                  "Enter your Google Gemini API key first to auto-detect available models."
+                )
+              }
+              val effectiveBase =
+                cleanBase.ifBlank { LlmProvider.GEMINI.defaultBaseUrl }
+              val encodedKey = URLEncoder.encode(cleanKey, "UTF-8")
+              val requestUrl = "$effectiveBase/models?key=$encodedKey"
+              val request = Request.Builder().url(requestUrl).get().build()
+              httpClient.newCall(request).execute().use { response ->
+                val body = response.body?.string().orEmpty()
+                if (!response.isSuccessful) {
+                  throw HttpStatusException(
+                    code = response.code,
+                    message =
+                      formatHttpError(
+                        provider = provider,
+                        code = response.code,
+                        url = "$effectiveBase/models",
+                        rawBody = body,
+                      ),
+                  )
+                }
+                parseGeminiModelsJson(body)
+              }
+            }
+
+            LlmProvider.OPENROUTER,
+            LlmProvider.OPENAI,
+            LlmProvider.GROQ,
+            LlmProvider.DEEPSEEK,
+            LlmProvider.CUSTOM -> {
+              if (!cleanBase.startsWith("http://") && !cleanBase.startsWith("https://")) {
+                throw IllegalArgumentException(
+                  "Enter a valid HTTP/HTTPS Base URL (e.g. https://api.openai.com/v1)."
+                )
+              }
+              if (provider != LlmProvider.CUSTOM && cleanKey.isEmpty()) {
+                throw IllegalArgumentException(
+                  "Enter your ${provider.displayName} API key first to detect models."
+                )
+              }
+              val requestUrl = "$cleanBase/models"
+              val reqBuilder =
+                Request.Builder()
+                  .url(requestUrl)
+                  .get()
+                  .addHeader("Accept", "application/json")
+              if (cleanKey.isNotEmpty()) {
+                reqBuilder.addHeader("Authorization", "Bearer $cleanKey")
+              }
+              if (provider == LlmProvider.OPENROUTER) {
+                reqBuilder
+                  .addHeader("HTTP-Referer", OPENROUTER_REFERER)
+                  .addHeader("X-Title", OPENROUTER_APP_TITLE)
+              }
+              httpClient.newCall(reqBuilder.build()).execute().use { response ->
+                val body = response.body?.string().orEmpty()
+                if (!response.isSuccessful) {
+                  throw HttpStatusException(
+                    code = response.code,
+                    message =
+                      formatHttpError(
+                        provider = provider,
+                        code = response.code,
+                        url = requestUrl,
+                        rawBody = body,
+                      ),
+                  )
+                }
+                parseOpenAiModelsJson(body)
+              }
+            }
+          }
+        }
+      }
+    } catch (e: TimeoutCancellationException) {
+      throw IllegalStateException(
+        "Timed out fetching models from ${provider.displayName}. Check network or Base URL.",
+        e,
+      )
+    } catch (e: SocketTimeoutException) {
+      throw IllegalStateException(
+        "Network timeout fetching models from ${provider.displayName}. Check network or Base URL.",
+        e,
+      )
+    } catch (e: UnknownHostException) {
+      throw IllegalStateException(
+        "Could not resolve ${provider.displayName} host. Check internet connection and Base URL.",
+        e,
+      )
+    } catch (e: CancellationException) {
+      throw e
+    }
+  }
+
   suspend fun runAutoPilotAndAudit(
     topicOrDraft: String,
     partNumber: Int,
     totalParts: Int = 1,
     generateFromTopic: Boolean,
-    geminiApiKey: String = "",
-    geminiModel: String = StudioConfig.DEFAULT_GEMINI_MODEL,
+    provider: LlmProvider = LlmProvider.GEMINI,
+    baseUrl: String = provider.defaultBaseUrl,
+    apiKey: String = "",
+    model: String = provider.defaultModel,
     godPrompt: String = "",
     priorPartTail: String = "",
     onProgress: (percent: Int, step: String) -> Unit = { _, _ -> },
@@ -60,23 +179,37 @@ class GeminiScriptClient(
       "Enter an episode topic/prompt or paste a draft script first."
     }
 
-    val effectiveModel = geminiModel.trim().ifEmpty { StudioConfig.DEFAULT_GEMINI_MODEL }
-    val cleanApiKey = geminiApiKey.trim()
-    val cleanGodPrompt = godPrompt.trim()
+    val effectiveModel =
+      model.trim().ifEmpty { provider.defaultModel }
+    require(effectiveModel.isNotBlank()) {
+      "Enter or select a Model ID for ${provider.displayName} in API & Settings."
+    }
+
+    val cleanApiKey = apiKey.trim()
+    val cleanBaseUrl = normalizeBaseUrl(provider, baseUrl)
+    val cleanGodPrompt = resolveGodPromptText(godPrompt, onLog)
+    val engineLabel =
+      if (provider == LlmProvider.GEMINI && cleanApiKey.isEmpty()) {
+        "Firebase AI Logic"
+      } else {
+        "${provider.displayName} ($effectiveModel)"
+      }
 
     // Step 1: Generate draft (if Auto-Pilot generation requested) or start from pasted draft
     var candidate =
       if (generateFromTopic) {
-        onProgress(15, "Gemini Auto-Pilot: Writing Part $partNumber/$totalParts narration...")
+        onProgress(15, "${provider.displayName} Auto-Pilot: Writing Part $partNumber/$totalParts narration...")
         onLog(
-          "Gemini Auto-Pilot: Generating Part $partNumber/$totalParts script draft (${if (cleanApiKey.isNotEmpty()) "API Key: $effectiveModel" else "Firebase AI Logic"})...",
+          "Auto-Pilot: Generating Part $partNumber/$totalParts script draft via $engineLabel...",
           LogLevel.INFO,
         )
         callWithTransientRetry("Auto-Pilot Draft", onLog) {
           invokeModel(
             prompt = buildAutoPilotPrompt(cleanInput, partNumber, totalParts, priorPartTail),
-            geminiApiKey = cleanApiKey,
-            geminiModel = effectiveModel,
+            provider = provider,
+            baseUrl = cleanBaseUrl,
+            apiKey = cleanApiKey,
+            modelName = effectiveModel,
             systemInstruction = cleanGodPrompt,
           )
         }
@@ -86,14 +219,16 @@ class GeminiScriptClient(
 
     // Step 2: Mandatory Self-Audit Pass
     currentCoroutineContext().ensureActive()
-    onProgress(45, "Gemini Self-Audit: Auditing Part $partNumber cues, digits & cleanliness...")
-    onLog("Gemini Self-Audit: Enforcing spoken narration rules & cue syntax...", LogLevel.INFO)
+    onProgress(45, "${provider.displayName} Self-Audit: Auditing Part $partNumber cues, digits & cleanliness...")
+    onLog("Self-Audit ($engineLabel): Enforcing spoken narration rules & cue syntax...", LogLevel.INFO)
     candidate =
       callWithTransientRetry("Self-Audit Pass", onLog) {
         invokeModel(
           prompt = buildSelfAuditPrompt(candidate),
-          geminiApiKey = cleanApiKey,
-          geminiModel = effectiveModel,
+          provider = provider,
+          baseUrl = cleanBaseUrl,
+          apiKey = cleanApiKey,
+          modelName = effectiveModel,
           systemInstruction = cleanGodPrompt,
         )
       }
@@ -108,7 +243,7 @@ class GeminiScriptClient(
       currentCoroutineContext().ensureActive()
       repairPasses++
       val pct = 60 + (repairPasses * 15)
-      onProgress(pct, "Gemini Repair Pass $repairPasses/$MAX_REPAIR_PASSES...")
+      onProgress(pct, "QA Repair Pass $repairPasses/$MAX_REPAIR_PASSES ($effectiveModel)...")
       onLog(
         "Targeted repair pass $repairPasses/$MAX_REPAIR_PASSES triggered (${qa.errors.size} error(s), ${qa.warnings.size} warning(s)).",
         LogLevel.WARNING,
@@ -118,8 +253,10 @@ class GeminiScriptClient(
         callWithTransientRetry("Repair Pass $repairPasses", onLog) {
           invokeModel(
             prompt = buildRepairPrompt(sanitized.ifBlank { candidate }, qa),
-            geminiApiKey = cleanApiKey,
-            geminiModel = effectiveModel,
+            provider = provider,
+            baseUrl = cleanBaseUrl,
+            apiKey = cleanApiKey,
+            modelName = effectiveModel,
             systemInstruction = cleanGodPrompt,
           )
         }
@@ -129,7 +266,7 @@ class GeminiScriptClient(
 
     if (!qa.isValid || qa.hasFatalDigits) {
       val reason = qa.errors.firstOrNull() ?: "Script failed validation after $repairPasses repair pass(es)."
-      onLog("Gemini Audit blocked unsafe script: $reason", LogLevel.ERROR)
+      onLog("Script Audit blocked unsafe script: $reason", LogLevel.ERROR)
       throw IllegalStateException(
         "Script QA blocked output before TTS ($reason). Fix manually or retry Auto-Pilot."
       )
@@ -137,7 +274,7 @@ class GeminiScriptClient(
 
     onProgress(100, "Part $partNumber Self-Audit complete (${qa.charCount} chars).")
     onLog(
-      "Part $partNumber Gemini Self-Audit passed: ${qa.charCount} spoken chars, ${qa.sfxCount} SFX, ${qa.silenceCount} silence drop(s), $repairPasses repair pass(es).",
+      "Part $partNumber Self-Audit passed: ${qa.charCount} spoken chars, ${qa.sfxCount} SFX, ${qa.silenceCount} silence drop(s), $repairPasses repair pass(es).",
       LogLevel.SUCCESS,
     )
     return GeminiScriptAuditOutcome(
@@ -147,29 +284,82 @@ class GeminiScriptClient(
     )
   }
 
+  private suspend fun resolveGodPromptText(
+    explicitOverride: String,
+    onLog: (String, LogLevel) -> Unit,
+  ): String {
+    val direct = explicitOverride.trim()
+    if (direct.isNotEmpty()) return direct
+    val file = godPromptFile ?: return ""
+    val loaded =
+      withContext(Dispatchers.IO) {
+        if (file.exists() && file.isFile && file.length() > 0L) {
+          runCatching { file.readText(Charsets.UTF_8).trim() }.getOrDefault("")
+        } else {
+          ""
+        }
+      }
+    if (loaded.isNotEmpty()) {
+      onLog("Loaded master God Prompt (${loaded.length} chars) from ${file.name}.", LogLevel.INFO)
+    }
+    return loaded
+  }
+
   private suspend fun invokeModel(
     prompt: String,
-    geminiApiKey: String,
-    geminiModel: String,
+    provider: LlmProvider,
+    baseUrl: String,
+    apiKey: String,
+    modelName: String,
     systemInstruction: String,
   ): String {
     currentCoroutineContext().ensureActive()
     if (generateRawOverride != null) {
-      return withTimeout(60_000L) { generateRawOverride.invoke(prompt) }
+      return withTimeout(REQUEST_TIMEOUT_MS) { generateRawOverride.invoke(prompt) }
     }
 
-    // If user configured a personal Gemini API key in API & Settings, use Google AI REST endpoint directly
-    if (geminiApiKey.isNotBlank()) {
-      return invokeRestWithUserApiKey(
-        prompt = prompt,
-        apiKey = geminiApiKey,
-        modelName = geminiModel,
-        systemInstruction = systemInstruction,
-      )
-    }
+    return when (provider) {
+      LlmProvider.GEMINI -> {
+        if (apiKey.isNotBlank()) {
+          invokeGeminiRestWithUserApiKey(
+            prompt = prompt,
+            baseUrl = baseUrl.ifBlank { LlmProvider.GEMINI.defaultBaseUrl },
+            apiKey = apiKey,
+            modelName = modelName,
+            systemInstruction = systemInstruction,
+          )
+        } else {
+          invokeFirebaseAiLogic(
+            prompt = prompt,
+            configuredModel = modelName,
+            systemInstruction = systemInstruction,
+          )
+        }
+      }
 
-    // Otherwise use provisioned Firebase AI Logic (requires no API key; uses App Check)
-    val firebaseSafeModel = resolveFirebaseAiModel(geminiModel)
+      LlmProvider.OPENROUTER,
+      LlmProvider.OPENAI,
+      LlmProvider.GROQ,
+      LlmProvider.DEEPSEEK,
+      LlmProvider.CUSTOM -> {
+        invokeOpenAiCompatibleChat(
+          prompt = prompt,
+          provider = provider,
+          baseUrl = baseUrl,
+          apiKey = apiKey,
+          modelName = modelName,
+          systemInstruction = systemInstruction,
+        )
+      }
+    }
+  }
+
+  private suspend fun invokeFirebaseAiLogic(
+    prompt: String,
+    configuredModel: String,
+    systemInstruction: String,
+  ): String {
+    val firebaseSafeModel = resolveFirebaseAiModel(configuredModel)
     val model =
       if (systemInstruction.isNotBlank()) {
         Firebase.ai.generativeModel(
@@ -181,7 +371,7 @@ class GeminiScriptClient(
       }
 
     return try {
-      val response = withTimeout(60_000L) { model.generateContent(prompt) }
+      val response = withTimeout(REQUEST_TIMEOUT_MS) { model.generateContent(prompt) }
       val text = response.text?.trim()
       if (text.isNullOrBlank()) {
         throw IllegalStateException("Gemini returned an empty response.")
@@ -198,13 +388,14 @@ class GeminiScriptClient(
     }
   }
 
-  private suspend fun invokeRestWithUserApiKey(
+  private suspend fun invokeGeminiRestWithUserApiKey(
     prompt: String,
+    baseUrl: String,
     apiKey: String,
     modelName: String,
     systemInstruction: String,
   ): String =
-    withTimeout(60_000L) {
+    withTimeout(REQUEST_TIMEOUT_MS) {
       withContext(Dispatchers.IO) {
         currentCoroutineContext().ensureActive()
         val bodyObj =
@@ -229,9 +420,10 @@ class GeminiScriptClient(
           }
 
         val cleanModel = modelName.removePrefix("models/").trim()
+        val requestUrl = "${baseUrl.trimEnd('/')}/models/$cleanModel:generateContent"
         val request =
           Request.Builder()
-            .url("https://generativelanguage.googleapis.com/v1beta/models/$cleanModel:generateContent")
+            .url(requestUrl)
             .addHeader("x-goog-api-key", apiKey)
             .post(bodyObj.toString().toRequestBody(jsonMediaType))
             .build()
@@ -239,8 +431,16 @@ class GeminiScriptClient(
         httpClient.newCall(request).execute().use { response ->
           val respText = response.body?.string().orEmpty()
           if (!response.isSuccessful) {
-            val detail = extractRestError(respText)
-            throw IllegalStateException("Gemini HTTP ${response.code}: $detail")
+            throw HttpStatusException(
+              code = response.code,
+              message =
+                formatHttpError(
+                  provider = LlmProvider.GEMINI,
+                  code = response.code,
+                  url = requestUrl,
+                  rawBody = respText,
+                ),
+            )
           }
           val root = JSONObject(respText)
           val candidates = root.optJSONArray("candidates")
@@ -262,10 +462,118 @@ class GeminiScriptClient(
       }
     }
 
+  private suspend fun invokeOpenAiCompatibleChat(
+    prompt: String,
+    provider: LlmProvider,
+    baseUrl: String,
+    apiKey: String,
+    modelName: String,
+    systemInstruction: String,
+  ): String {
+    if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
+      throw IllegalArgumentException(
+        "Invalid Base URL for ${provider.displayName}. Must start with http:// or https://."
+      )
+    }
+    if (provider != LlmProvider.CUSTOM && apiKey.isBlank()) {
+      throw IllegalArgumentException(
+        "Missing ${provider.displayName} API Key. Enter it in API & Settings."
+      )
+    }
+
+    return withTimeout(REQUEST_TIMEOUT_MS) {
+      withContext(Dispatchers.IO) {
+        currentCoroutineContext().ensureActive()
+        val messages =
+          JSONArray().apply {
+            if (systemInstruction.isNotBlank()) {
+              put(
+                JSONObject()
+                  .put("role", "system")
+                  .put("content", systemInstruction),
+              )
+            }
+            put(
+              JSONObject()
+                .put("role", "user")
+                .put("content", prompt),
+            )
+          }
+
+        val bodyObj =
+          JSONObject().apply {
+            put("model", modelName)
+            put("messages", messages)
+          }
+
+        val requestUrl = "${baseUrl.trimEnd('/')}/chat/completions"
+        val reqBuilder =
+          Request.Builder()
+            .url(requestUrl)
+            .addHeader("Accept", "application/json")
+            .post(bodyObj.toString().toRequestBody(jsonMediaType))
+        if (apiKey.isNotBlank()) {
+          reqBuilder.addHeader("Authorization", "Bearer $apiKey")
+        }
+        if (provider == LlmProvider.OPENROUTER) {
+          reqBuilder
+            .addHeader("HTTP-Referer", OPENROUTER_REFERER)
+            .addHeader("X-Title", OPENROUTER_APP_TITLE)
+        }
+
+        httpClient.newCall(reqBuilder.build()).execute().use { response ->
+          val respText = response.body?.string().orEmpty()
+          if (!response.isSuccessful) {
+            throw HttpStatusException(
+              code = response.code,
+              message =
+                formatHttpError(
+                  provider = provider,
+                  code = response.code,
+                  url = requestUrl,
+                  rawBody = respText,
+                ),
+            )
+          }
+
+          val content = parseOpenAiChatCompletionContent(respText)
+          if (content.isBlank()) {
+            throw IllegalStateException("${provider.displayName} returned an empty response.")
+          }
+          content
+        }
+      }
+    }
+  }
+
+  private fun formatHttpError(
+    provider: LlmProvider,
+    code: Int,
+    url: String,
+    rawBody: String,
+  ): String {
+    val detail = extractRestError(rawBody)
+    return when (code) {
+      401,
+      403 ->
+        "Authentication failed (HTTP $code) for ${provider.displayName}: verify your API key. ($detail)"
+      404 ->
+        "Endpoint or model not found (HTTP 404) at $url. Verify Base URL and Model ID. ($detail)"
+      429 ->
+        "Rate limit / quota exceeded (HTTP 429) for ${provider.displayName}. ($detail)"
+      else ->
+        "${provider.displayName} HTTP $code: $detail"
+    }
+  }
+
   private fun extractRestError(rawBody: String): String {
     if (rawBody.isBlank()) return "Empty response body"
     return runCatching {
-      JSONObject(rawBody).optJSONObject("error")?.optString("message")?.takeIf { it.isNotBlank() }
+      val json = JSONObject(rawBody)
+      val errObj = json.optJSONObject("error")
+      val nestedMsg = errObj?.optString("message")?.takeIf { it.isNotBlank() }
+      nestedMsg
+        ?: json.optString("message").takeIf { it.isNotBlank() }
         ?: rawBody.take(240)
     }.getOrElse { rawBody.take(240) }
   }
@@ -273,7 +581,7 @@ class GeminiScriptClient(
   private fun resolveFirebaseAiModel(configuredModel: String): String {
     val clean = configuredModel.trim()
     if (clean.isBlank()) return FIREBASE_DEFAULT_MODEL
-    val lower = clean.lowercase()
+    val lower = clean.lowercase(Locale.ROOT)
     return if (
       lower.startsWith("gemini-1.") ||
         lower.startsWith("gemini-2.") ||
@@ -323,8 +631,14 @@ class GeminiScriptClient(
   }
 
   private fun isTransientError(error: Throwable): Boolean {
+    if (error is HttpStatusException) {
+      return error.code == 429 || error.code in 500..599
+    }
     if (error is IOException) return true
-    val msg = (error.message ?: "").lowercase()
+    val msg = (error.message ?: "").lowercase(Locale.ROOT)
+    if (msg.contains("http 401") || msg.contains("http 403") || msg.contains("http 404") || msg.contains("http 400")) {
+      return false
+    }
     return msg.contains("429") ||
       msg.contains("500") ||
       msg.contains("502") ||
@@ -415,10 +729,95 @@ class GeminiScriptClient(
     """.trimIndent()
   }
 
+  private class HttpStatusException(val code: Int, message: String) : IllegalStateException(message)
+
   companion object {
     private const val TAG = "GeminiScriptClient"
     private const val MAX_REPAIR_PASSES = 2
+    private const val REQUEST_TIMEOUT_MS = 60_000L
+    private const val MODEL_FETCH_TIMEOUT_MS = 30_000L
     private const val FIREBASE_DEFAULT_MODEL = "gemini-3.8-flash"
+    private const val OPENROUTER_REFERER = "https://themissingpage.studio"
+    private const val OPENROUTER_APP_TITLE = "The Missing Page - S-Tier Studio"
     val RETRY_BACKOFFS_MS = listOf(5_000L, 15_000L, 30_000L)
+
+    fun normalizeBaseUrl(provider: LlmProvider, rawBaseUrl: String): String {
+      val candidate = rawBaseUrl.trim().ifBlank { provider.defaultBaseUrl }.trimEnd('/')
+      if (candidate.isEmpty()) return ""
+      return when {
+        candidate.endsWith("/chat/completions", ignoreCase = true) ->
+          candidate.dropLast("/chat/completions".length).trimEnd('/')
+        candidate.endsWith("/models", ignoreCase = true) ->
+          candidate.dropLast("/models".length).trimEnd('/')
+        else -> candidate
+      }
+    }
+
+    fun parseGeminiModelsJson(jsonBody: String): List<String> {
+      val root = JSONObject(jsonBody)
+      val modelsArray =
+        root.optJSONArray("models")
+          ?: throw IllegalStateException("Unexpected Gemini /models response format.")
+      val result = LinkedHashSet<String>()
+      for (i in 0 until modelsArray.length()) {
+        val item = modelsArray.optJSONObject(i) ?: continue
+        val methods = item.optJSONArray("supportedGenerationMethods")
+        var supportsGenerateContent = false
+        if (methods != null) {
+          for (j in 0 until methods.length()) {
+            if (methods.optString(j) == "generateContent") {
+              supportsGenerateContent = true
+              break
+            }
+          }
+        }
+        if (!supportsGenerateContent) continue
+        val cleanName = item.optString("name", "").trim().removePrefix("models/").trim()
+        if (cleanName.isNotEmpty()) {
+          result += cleanName
+        }
+      }
+      return result.sorted()
+    }
+
+    fun parseOpenAiModelsJson(jsonBody: String): List<String> {
+      val root = JSONObject(jsonBody)
+      val dataArray =
+        root.optJSONArray("data")
+          ?: throw IllegalStateException("Unexpected /models response format (missing 'data' array).")
+      val result = LinkedHashSet<String>()
+      for (i in 0 until dataArray.length()) {
+        val item = dataArray.optJSONObject(i) ?: continue
+        val id = item.optString("id", "").trim()
+        if (id.isNotEmpty()) {
+          result += id
+        }
+      }
+      return result.sorted()
+    }
+
+    fun parseOpenAiChatCompletionContent(jsonBody: String): String {
+      val root = JSONObject(jsonBody)
+      val choices = root.optJSONArray("choices") ?: return ""
+      val firstChoice = choices.optJSONObject(0) ?: return ""
+      val message = firstChoice.optJSONObject("message") ?: return ""
+      val rawContent: Any? = message.opt("content")
+      return if (rawContent is String) {
+        rawContent.trim()
+      } else if (rawContent is JSONArray) {
+        buildString {
+          for (i in 0 until rawContent.length()) {
+            val partObj = rawContent.optJSONObject(i)
+            if (partObj != null) {
+              append(partObj.optString("text", ""))
+            } else {
+              append(rawContent.optString(i, ""))
+            }
+          }
+        }.trim()
+      } else {
+        ""
+      }
+    }
   }
 }

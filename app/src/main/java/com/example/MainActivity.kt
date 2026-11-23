@@ -11,14 +11,15 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.FolderSpecial
@@ -29,6 +30,7 @@ import androidx.compose.material.icons.outlined.MovieCreation
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -36,6 +38,7 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
+import androidx.compose.material3.NavigationRailItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
@@ -44,6 +47,7 @@ import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -68,9 +72,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.data.AppTab
 import com.example.data.StudioRunStatus
-import com.example.ui.ApiSettingsScreen
-import com.example.ui.MediaHubScreen
-import com.example.ui.StudioScreen
+import com.example.ui.ApiSettingsTabRoute
+import com.example.ui.MediaHubTabRoute
+import com.example.ui.StudioTabRoute
 import com.example.ui.StudioViewModel
 import com.example.ui.components.VideoPreviewDialog
 import com.example.ui.theme.JetBrainsMonoFontFamily
@@ -84,6 +88,7 @@ import com.example.ui.theme.StudioCyan
 import com.example.ui.theme.StudioCyanDim
 import com.example.ui.theme.StudioGreen
 import com.example.ui.theme.StudioGreenDim
+import com.example.ui.theme.StudioOutline
 import com.example.ui.theme.StudioRed
 import com.example.ui.theme.StudioRedDim
 import com.example.ui.theme.StudioTextPrimary
@@ -113,19 +118,10 @@ fun MissingPageStudioApp(
   val context = LocalContext.current
   val lifecycleOwner = LocalLifecycleOwner.current
 
-  val config by viewModel.config.collectAsStateWithLifecycle()
-  val partStatuses by viewModel.partStatuses.collectAsStateWithLifecycle()
-  val mediaHubState by viewModel.mediaHubState.collectAsStateWithLifecycle()
-  val dialogueText by viewModel.dialogueText.collectAsStateWithLifecycle()
-  val qaResult by viewModel.qaResult.collectAsStateWithLifecycle()
+  // Root chrome collects ONLY lightweight global status/overlay/snackbar flows
+  // so 250ms progress ticks & log appends never recompose sibling tabs or app chrome.
   val runStatus by viewModel.runStatus.collectAsStateWithLifecycle()
-  val progress by viewModel.progress.collectAsStateWithLifecycle()
-  val logs by viewModel.logs.collectAsStateWithLifecycle()
-  val playingAudioPart by viewModel.playingAudioPart.collectAsStateWithLifecycle()
-  val subscriptionInfo by viewModel.subscriptionInfo.collectAsStateWithLifecycle()
-  val isCheckingSubscription by viewModel.isCheckingSubscription.collectAsStateWithLifecycle()
   val previewTarget by viewModel.previewTarget.collectAsStateWithLifecycle()
-  val lowStorageWarning by viewModel.lowStorageWarning.collectAsStateWithLifecycle()
   val snackbarEvent by viewModel.snackbarEvent.collectAsStateWithLifecycle()
 
   var activeTab by rememberSaveable { mutableStateOf(AppTab.STUDIO) }
@@ -184,6 +180,11 @@ fun MissingPageStudioApp(
       if (uri != null) viewModel.importDialogueTxt(uri)
     }
 
+  val godPromptFilePicker =
+    rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+      if (uri != null) viewModel.importGodPromptFile(uri)
+    }
+
   val stockLoopsMultiPicker =
     rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
       if (uris.isNotEmpty()) viewModel.addStockLoops(uris)
@@ -233,101 +234,135 @@ fun MissingPageStudioApp(
     Scaffold(
       modifier = Modifier.fillMaxSize(),
       containerColor = StudioBackground,
-      contentWindowInsets = WindowInsets.safeDrawing,
+      contentWindowInsets = WindowInsets.navigationBars,
       snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
       topBar = {
-        CenterAlignedTopAppBar(
-          title = {
-            Row(
-              verticalAlignment = Alignment.CenterVertically,
-              horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-              Text(
-                text = stringResource(R.string.studio_header_title),
-                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                color = StudioCyan,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f, fill = false),
-              )
-              StatusPill(runStatus)
-            }
-          },
-          colors =
-            TopAppBarDefaults.centerAlignedTopAppBarColors(
-              containerColor = StudioBackground,
-            ),
-        )
+        Column {
+          CenterAlignedTopAppBar(
+            title = {
+              Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+              ) {
+                Text(
+                  text = stringResource(R.string.studio_header_title),
+                  style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                  color = StudioCyan,
+                  maxLines = 1,
+                  overflow = TextOverflow.Ellipsis,
+                  modifier = Modifier.weight(1f, fill = false),
+                )
+                StatusPill(runStatus)
+              }
+            },
+            colors =
+              TopAppBarDefaults.centerAlignedTopAppBarColors(
+                containerColor = StudioBackground,
+              ),
+          )
+          HorizontalDivider(color = StudioOutline)
+        }
       },
       bottomBar = {
         if (!useRail) {
-          NavigationBar(
-            windowInsets = WindowInsets.navigationBars,
-            containerColor = StudioCard,
-          ) {
-            val navColors =
-              NavigationBarItemDefaults.colors(
-                selectedIconColor = StudioCyan,
-                selectedTextColor = StudioCyan,
-                indicatorColor = StudioCyanDim,
-                unselectedIconColor = StudioTextSecondary,
-                unselectedTextColor = StudioTextSecondary,
+          Column {
+            HorizontalDivider(color = StudioOutline)
+            NavigationBar(
+              windowInsets = WindowInsets.navigationBars,
+              containerColor = StudioCard,
+              tonalElevation = 0.dp,
+            ) {
+              val navColors =
+                NavigationBarItemDefaults.colors(
+                  selectedIconColor = StudioCyan,
+                  selectedTextColor = StudioCyan,
+                  indicatorColor = StudioCyanDim,
+                  unselectedIconColor = StudioTextSecondary,
+                  unselectedTextColor = StudioTextSecondary,
+                )
+              NavigationBarItem(
+                selected = activeTab == AppTab.STUDIO,
+                onClick = { activeTab = AppTab.STUDIO },
+                colors = navColors,
+                icon = {
+                  Icon(
+                    imageVector =
+                      if (activeTab == AppTab.STUDIO) Icons.Filled.MovieCreation
+                      else Icons.Outlined.MovieCreation,
+                    contentDescription = stringResource(R.string.nav_studio),
+                  )
+                },
+                label = {
+                  Text(
+                    text = stringResource(R.string.nav_studio),
+                    maxLines = 1,
+                    softWrap = false,
+                  )
+                },
+                modifier = Modifier.testTag("nav_studio_tab"),
               )
-            NavigationBarItem(
-              selected = activeTab == AppTab.STUDIO,
-              onClick = { activeTab = AppTab.STUDIO },
-              colors = navColors,
-              icon = {
-                Icon(
-                  imageVector =
-                    if (activeTab == AppTab.STUDIO) Icons.Filled.MovieCreation
-                    else Icons.Outlined.MovieCreation,
-                  contentDescription = stringResource(R.string.nav_studio),
-                )
-              },
-              label = { Text(stringResource(R.string.nav_studio)) },
-              modifier = Modifier.testTag("nav_studio_tab"),
-            )
-            NavigationBarItem(
-              selected = activeTab == AppTab.MEDIA_HUB,
-              onClick = { activeTab = AppTab.MEDIA_HUB },
-              colors = navColors,
-              icon = {
-                Icon(
-                  imageVector =
-                    if (activeTab == AppTab.MEDIA_HUB) Icons.Filled.FolderSpecial
-                    else Icons.Outlined.FolderSpecial,
-                  contentDescription = stringResource(R.string.nav_media_hub),
-                )
-              },
-              label = { Text(stringResource(R.string.nav_media_hub)) },
-              modifier = Modifier.testTag("nav_media_hub_tab"),
-            )
-            NavigationBarItem(
-              selected = activeTab == AppTab.API_SETTINGS,
-              onClick = { activeTab = AppTab.API_SETTINGS },
-              colors = navColors,
-              icon = {
-                Icon(
-                  imageVector =
-                    if (activeTab == AppTab.API_SETTINGS) Icons.Filled.Settings
-                    else Icons.Outlined.Settings,
-                  contentDescription = stringResource(R.string.nav_api_settings),
-                )
-              },
-              label = { Text(stringResource(R.string.nav_api_settings)) },
-              modifier = Modifier.testTag("nav_api_settings_tab"),
-            )
+              NavigationBarItem(
+                selected = activeTab == AppTab.MEDIA_HUB,
+                onClick = { activeTab = AppTab.MEDIA_HUB },
+                colors = navColors,
+                icon = {
+                  Icon(
+                    imageVector =
+                      if (activeTab == AppTab.MEDIA_HUB) Icons.Filled.FolderSpecial
+                      else Icons.Outlined.FolderSpecial,
+                    contentDescription = stringResource(R.string.nav_media_hub),
+                  )
+                },
+                label = {
+                  Text(
+                    text = stringResource(R.string.nav_media_hub),
+                    maxLines = 1,
+                    softWrap = false,
+                  )
+                },
+                modifier = Modifier.testTag("nav_media_hub_tab"),
+              )
+              NavigationBarItem(
+                selected = activeTab == AppTab.API_SETTINGS,
+                onClick = { activeTab = AppTab.API_SETTINGS },
+                colors = navColors,
+                icon = {
+                  Icon(
+                    imageVector =
+                      if (activeTab == AppTab.API_SETTINGS) Icons.Filled.Settings
+                      else Icons.Outlined.Settings,
+                    contentDescription = stringResource(R.string.nav_api_settings),
+                  )
+                },
+                label = {
+                  Text(
+                    text = stringResource(R.string.nav_api_settings),
+                    maxLines = 1,
+                    softWrap = false,
+                  )
+                },
+                modifier = Modifier.testTag("nav_api_settings_tab"),
+              )
+            }
           }
         }
       },
     ) { innerPadding ->
       Row(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
         if (useRail) {
+          val railColors =
+            NavigationRailItemDefaults.colors(
+              selectedIconColor = StudioCyan,
+              selectedTextColor = StudioCyan,
+              indicatorColor = StudioCyanDim,
+              unselectedIconColor = StudioTextSecondary,
+              unselectedTextColor = StudioTextSecondary,
+            )
           NavigationRail(containerColor = StudioCard) {
             NavigationRailItem(
               selected = activeTab == AppTab.STUDIO,
               onClick = { activeTab = AppTab.STUDIO },
+              colors = railColors,
               icon = {
                 Icon(
                   imageVector =
@@ -336,12 +371,13 @@ fun MissingPageStudioApp(
                   contentDescription = stringResource(R.string.nav_studio),
                 )
               },
-              label = { Text(stringResource(R.string.nav_studio)) },
+              label = { Text(stringResource(R.string.nav_studio), maxLines = 1, softWrap = false) },
               modifier = Modifier.testTag("rail_studio_tab"),
             )
             NavigationRailItem(
               selected = activeTab == AppTab.MEDIA_HUB,
               onClick = { activeTab = AppTab.MEDIA_HUB },
+              colors = railColors,
               icon = {
                 Icon(
                   imageVector =
@@ -350,12 +386,13 @@ fun MissingPageStudioApp(
                   contentDescription = stringResource(R.string.nav_media_hub),
                 )
               },
-              label = { Text(stringResource(R.string.nav_media_hub)) },
+              label = { Text(stringResource(R.string.nav_media_hub), maxLines = 1, softWrap = false) },
               modifier = Modifier.testTag("rail_media_hub_tab"),
             )
             NavigationRailItem(
               selected = activeTab == AppTab.API_SETTINGS,
               onClick = { activeTab = AppTab.API_SETTINGS },
+              colors = railColors,
               icon = {
                 Icon(
                   imageVector =
@@ -364,25 +401,17 @@ fun MissingPageStudioApp(
                   contentDescription = stringResource(R.string.nav_api_settings),
                 )
               },
-              label = { Text(stringResource(R.string.nav_api_settings)) },
+              label = { Text(stringResource(R.string.nav_api_settings), maxLines = 1, softWrap = false) },
               modifier = Modifier.testTag("rail_api_settings_tab"),
             )
           }
+          VerticalDivider(color = StudioOutline)
         }
 
         when (activeTab) {
           AppTab.STUDIO -> {
-            StudioScreen(
-              config = config,
-              partStatuses = partStatuses,
-              dialogueText = dialogueText,
-              qaResult = qaResult,
-              progress = progress,
-              logs = logs,
-              playingAudioPart = playingAudioPart,
-              lowStorageWarning = lowStorageWarning,
-              onUpdatePartFolders = { viewModel.updatePartFolders(it) },
-              onSelectPart = { viewModel.selectPart(it) },
+            StudioTabRoute(
+              viewModel = viewModel,
               onPickPartVideo = { partNum ->
                 pendingPartForPicker = partNum
                 partVideoPicker.launch(arrayOf("video/mp4", "video/*"))
@@ -392,80 +421,33 @@ fun MissingPageStudioApp(
                 partAudioPicker.launch(arrayOf("audio/*"))
               },
               onLoadTxt = { txtScriptPicker.launch(arrayOf("text/plain", "text/*")) },
-              onTogglePlayAudio = { viewModel.togglePlayPartAudio(it) },
-              onClearPart = { viewModel.clearPart(it) },
-              onDialogueChange = { viewModel.onDialogueChanged(it) },
-              onClearDialogue = { viewModel.clearDialogue() },
-              onPasteDialogue = { viewModel.pasteFromClipboard() },
-              onSanitizeDialogue = { viewModel.sanitizeDialogue() },
-              onRunGeminiAutoPilot = { viewModel.runGeminiAutoPilot(it) },
-              onRunGeminiSelfAudit = { viewModel.runGeminiSelfAudit() },
-              onReadClipboard = { viewModel.readClipboard() },
-              onAutoPilotFullAutoToggle = { viewModel.setAutoPilotFullAuto(it) },
-              onRunAutoPilotEpisode = { topic, fullAuto ->
-                viewModel.runAutoPilotEpisode(topic, fullAuto)
-              },
-              onAutoPasteToggle = { viewModel.setAutoPasteEnabled(it) },
-              onAutoNextToggle = { viewModel.setAutoNextPartEnabled(it) },
-              onDownloadVoice = { viewModel.startDownloadVoice() },
-              onFilterSelected = { viewModel.setFilterMode(it) },
-              onPreviewFilter = { viewModel.startFilterPreview() },
-              onTurboToggle = { viewModel.setTurboModeEnabled(it) },
-              onSmartResumeToggle = { viewModel.setSmartResumeEnabled(it) },
-              onSaveTransitions = { viewModel.saveTransitionsAfter(it) },
-              onAutoCleanToggle = { viewModel.setAutoCleanAfterExport(it) },
-              onClearWorkspaceTotalZero = { viewModel.clearWorkspaceTotalZero() },
-              onStartSmartRender = { viewModel.startSmartRender(ignoreLowStorage = false) },
-              onConfirmLowStorageRender = { viewModel.startSmartRender(ignoreLowStorage = true) },
-              onDismissLowStorageWarning = { viewModel.dismissLowStorageWarning() },
-              onCancelActiveTask = { viewModel.cancelActiveTask() },
-              onClearLogs = { viewModel.clearLogs() },
               modifier = Modifier.weight(1f),
             )
           }
 
           AppTab.MEDIA_HUB -> {
-            MediaHubScreen(
-              state = mediaHubState,
-              isBusy = progress.isRunning,
+            MediaHubTabRoute(
+              viewModel = viewModel,
               onAddStockLoops = { stockLoopsMultiPicker.launch(arrayOf("video/*")) },
-              onDeleteStockLoop = { viewModel.deleteStockLoop(it) },
               onPickTransition = { transitionPicker.launch(arrayOf("video/mp4", "video/*")) },
-              onRemoveTransition = { viewModel.removeTransitionBroll() },
               onPickBgm = { bgmPicker.launch(arrayOf("audio/*")) },
-              onRemoveBgm = { viewModel.removeBgm() },
               onPickOutro = { outroPicker.launch(arrayOf("video/mp4", "video/*")) },
-              onRemoveOutro = { viewModel.removeOutro() },
-              onCleanTempCache = { viewModel.cleanTempCache() },
-              onPlayFinishedVideo = { viewModel.playFinishedVideo(it.name, it.filePath) },
-              onSaveFinishedToGallery = { viewModel.saveFinishedVideoToGallery(it.filePath) },
               onShareFinishedVideo = { video ->
                 val intent = viewModel.createShareIntent(video.filePath)
                 context.startActivity(Intent.createChooser(intent, "Share ${video.name}"))
               },
-              onDeleteFinishedVideo = { viewModel.deleteFinishedVideo(it.filePath) },
               modifier = Modifier.weight(1f),
             )
           }
 
           AppTab.API_SETTINGS -> {
-            ApiSettingsScreen(
-              config = config,
-              subscriptionInfo = subscriptionInfo,
-              isCheckingSubscription = isCheckingSubscription,
-              onReadClipboard = { viewModel.readClipboard() },
-              onSaveSettings = { key, voice, model, sfxModel, geminiKey, geminiModel, godPrompt ->
-                viewModel.saveApiSettings(
-                  apiKey = key,
-                  voiceId = voice,
-                  modelId = model,
-                  sfxModelId = sfxModel,
-                  geminiApiKey = geminiKey,
-                  geminiModel = geminiModel,
-                  scriptWriterGodPrompt = godPrompt,
+            ApiSettingsTabRoute(
+              viewModel = viewModel,
+              onPickGodPromptFile = {
+                godPromptFilePicker.launch(
+                  arrayOf("text/plain", "text/csv", "text/comma-separated-values", "*/*")
                 )
               },
-              onCheckCredits = { viewModel.checkSubscriptionCredits() },
               modifier = Modifier.weight(1f),
             )
           }
@@ -477,16 +459,17 @@ fun MissingPageStudioApp(
 
 @Composable
 private fun StatusPill(status: StudioRunStatus) {
-  val (bg, fg) =
+  val (bg, fg, borderColor) =
     when (status) {
-      StudioRunStatus.READY -> StudioCardElevated to StudioTextPrimary
-      StudioRunStatus.BUSY -> StudioAmberDim to StudioAmber
-      StudioRunStatus.DONE -> StudioGreenDim to StudioGreen
-      StudioRunStatus.CANCELLED -> StudioAmberDim to StudioAmber
-      StudioRunStatus.ERROR -> StudioRedDim to StudioRed
+      StudioRunStatus.READY -> Triple(StudioCardElevated, StudioTextPrimary, StudioOutline)
+      StudioRunStatus.BUSY -> Triple(StudioAmberDim, StudioAmber, StudioAmber.copy(alpha = 0.55f))
+      StudioRunStatus.DONE -> Triple(StudioGreenDim, StudioGreen, StudioGreen.copy(alpha = 0.55f))
+      StudioRunStatus.CANCELLED -> Triple(StudioAmberDim, StudioAmber, StudioAmber.copy(alpha = 0.55f))
+      StudioRunStatus.ERROR -> Triple(StudioRedDim, StudioRed, StudioRed.copy(alpha = 0.55f))
     }
   Surface(
     color = bg,
+    border = BorderStroke(1.dp, borderColor),
     shape = RoundedCornerShape(8.dp),
     modifier = Modifier.testTag("studio_status_pill"),
   ) {
@@ -494,6 +477,8 @@ private fun StatusPill(status: StudioRunStatus) {
       text = status.label,
       style = MaterialTheme.typography.labelSmall.copy(fontFamily = JetBrainsMonoFontFamily),
       color = fg,
+      maxLines = 1,
+      softWrap = false,
       modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
     )
   }

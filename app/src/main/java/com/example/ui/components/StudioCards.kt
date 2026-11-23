@@ -7,8 +7,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -25,6 +24,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.AudioFile
+import androidx.compose.material.icons.filled.Audiotrack
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CleaningServices
@@ -38,6 +38,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.RocketLaunch
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
@@ -95,12 +96,12 @@ import com.example.ui.theme.StudioGreenDim
 import com.example.ui.theme.StudioOutline
 import com.example.ui.theme.StudioRed
 import com.example.ui.theme.StudioRedDim
+import com.example.ui.theme.StudioSectionLabelStyle
 import com.example.ui.theme.StudioTextMuted
 import com.example.ui.theme.StudioTextPrimary
 import com.example.ui.theme.StudioTextSecondary
 import java.util.Locale
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun PartWorkspaceCard(
   config: StudioConfig,
@@ -118,7 +119,10 @@ fun PartWorkspaceCard(
   var pendingPartCount by remember(config.partCount) { mutableIntStateOf(config.partCount) }
   var partCountDropdownExpanded by remember { mutableStateOf(false) }
   var targetPartDropdownExpanded by remember { mutableStateOf(false) }
-  val selectedPartStatus = partStatuses.firstOrNull { it.partNumber == config.selectedPart }
+  val selectedPartStatus =
+    remember(partStatuses, config.selectedPart) {
+      partStatuses.firstOrNull { it.partNumber == config.selectedPart }
+    }
 
   Card(
     colors = CardDefaults.cardColors(containerColor = StudioCard),
@@ -126,17 +130,17 @@ fun PartWorkspaceCard(
     shape = RoundedCornerShape(16.dp),
     modifier = Modifier.fillMaxWidth(),
   ) {
-    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
       Text(
         text = "PART SETUP & WORKSPACE",
-        style = MaterialTheme.typography.titleSmall,
+        style = StudioSectionLabelStyle,
         color = StudioCyan,
       )
 
       // Part Count Selector (1..30) + Update Folders
       Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
       ) {
         Box(modifier = Modifier.weight(1f)) {
@@ -144,14 +148,18 @@ fun PartWorkspaceCard(
             onClick = { partCountDropdownExpanded = true },
             enabled = !isBusy,
             border = BorderStroke(1.dp, StudioOutline),
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("part_count_dropdown"),
           ) {
             Text(
               text = "Parts: $pendingPartCount",
               color = StudioTextPrimary,
+              maxLines = 1,
+              softWrap = false,
+              overflow = TextOverflow.Ellipsis,
               modifier = Modifier.weight(1f),
             )
-            Icon(Icons.Filled.ArrowDropDown, contentDescription = "Select part count")
+            Icon(Icons.Filled.ArrowDropDown, contentDescription = "Select part count", tint = StudioTextSecondary)
           }
           DropdownMenu(
             expanded = partCountDropdownExpanded,
@@ -177,30 +185,40 @@ fun PartWorkspaceCard(
               containerColor = StudioCyanDim,
               contentColor = StudioCyan,
             ),
+          contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
           modifier = Modifier.heightIn(min = 48.dp).testTag("update_folders_button"),
         ) {
-          Icon(Icons.Filled.FolderOpen, contentDescription = null, modifier = Modifier.size(18.dp))
+          Icon(Icons.Filled.FolderOpen, contentDescription = null, modifier = Modifier.size(16.dp))
           Spacer(Modifier.width(6.dp))
-          Text("Update Folders")
+          Text(
+            text = "Update Folders",
+            maxLines = 1,
+            softWrap = false,
+            overflow = TextOverflow.Ellipsis,
+          )
         }
       }
 
       // Target Part Dropdown + Active Part Summary
       Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
       ) {
         Box(modifier = Modifier.weight(1f)) {
           OutlinedButton(
             onClick = { targetPartDropdownExpanded = true },
-            border = BorderStroke(1.dp, StudioCyan.copy(alpha = 0.6f)),
+            border = BorderStroke(1.dp, StudioCyan.copy(alpha = 0.55f)),
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("target_part_dropdown"),
           ) {
             Text(
               text = "Target: Part ${config.selectedPart}",
               color = StudioCyan,
               fontWeight = FontWeight.Bold,
+              maxLines = 1,
+              softWrap = false,
+              overflow = TextOverflow.Ellipsis,
               modifier = Modifier.weight(1f),
             )
             Icon(Icons.Filled.ArrowDropDown, contentDescription = "Select target part", tint = StudioCyan)
@@ -223,15 +241,16 @@ fun PartWorkspaceCard(
 
         val statusSummary =
           buildString {
-            append(if (selectedPartStatus?.hasAudio == true) "🎵 Audio" else "No Audio")
+            append(if (selectedPartStatus?.hasAudio == true) "Audio Ready" else "No Audio")
             append(" • ")
-            append(if (selectedPartStatus?.hasCustomVideo == true) "🎬 Custom" else "Stock Loop")
+            append(if (selectedPartStatus?.hasCustomVideo == true) "Custom MP4" else "Stock Loop")
           }
         Text(
           text = statusSummary,
-          style = MaterialTheme.typography.bodySmall,
+          style = MaterialTheme.typography.labelMedium,
           color = if (selectedPartStatus?.hasAudio == true) StudioGreen else StudioTextSecondary,
           maxLines = 1,
+          softWrap = false,
           overflow = TextOverflow.Ellipsis,
         )
       }
@@ -246,7 +265,7 @@ fun PartWorkspaceCard(
           val borderColor =
             when {
               isSelected -> StudioCyan
-              status.hasAudio -> StudioGreen.copy(alpha = 0.6f)
+              status.hasAudio -> StudioGreen.copy(alpha = 0.55f)
               else -> StudioOutline
             }
           val bgColor =
@@ -268,92 +287,144 @@ fun PartWorkspaceCard(
             Row(
               modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
               verticalAlignment = Alignment.CenterVertically,
-              horizontalArrangement = Arrangement.spacedBy(4.dp),
+              horizontalArrangement = Arrangement.spacedBy(5.dp),
             ) {
               Text(
                 text = "P${status.partNumber}",
                 style = MaterialTheme.typography.labelLarge,
                 color = if (isSelected) StudioCyan else StudioTextPrimary,
+                maxLines = 1,
+                softWrap = false,
               )
               if (status.hasAudio) {
-                Text(text = "🎵", style = MaterialTheme.typography.labelMedium)
+                Icon(
+                  imageVector = Icons.Filled.Audiotrack,
+                  contentDescription = "Audio ready",
+                  tint = StudioGreen,
+                  modifier = Modifier.size(14.dp),
+                )
               }
               if (status.hasCustomVideo) {
-                Text(text = "🎬", style = MaterialTheme.typography.labelMedium)
+                Icon(
+                  imageVector = Icons.Filled.Videocam,
+                  contentDescription = "Custom video ready",
+                  tint = StudioCyan,
+                  modifier = Modifier.size(14.dp),
+                )
               }
             }
           }
         }
       }
 
-      HorizontalDivider(color = StudioOutline.copy(alpha = 0.6f))
+      HorizontalDivider(color = StudioOutline)
 
-      // 1-Tap Per-Part Media Controls
-      FlowRow(
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-        modifier = Modifier.fillMaxWidth(),
-      ) {
-        OutlinedButton(
-          onClick = { onPickPartVideo(config.selectedPart) },
-          enabled = !isBusy,
-          border = BorderStroke(1.dp, StudioOutline),
-          modifier = Modifier.heightIn(min = 48.dp).testTag("pick_part_mp4_button"),
+      // Compact 2-column action grid so AutoPilotCard and DialogueEditor appear higher on screen
+      Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-          Icon(Icons.Filled.Movie, contentDescription = null, modifier = Modifier.size(16.dp), tint = StudioCyan)
-          Spacer(Modifier.width(6.dp))
-          Text("🎬 Pick Part MP4", color = StudioTextPrimary)
+          OutlinedButton(
+            onClick = { onPickPartVideo(config.selectedPart) },
+            enabled = !isBusy,
+            border = BorderStroke(1.dp, StudioOutline),
+            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 10.dp),
+            modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("pick_part_mp4_button"),
+          ) {
+            Icon(Icons.Filled.Movie, contentDescription = null, modifier = Modifier.size(16.dp), tint = StudioCyan)
+            Spacer(Modifier.width(6.dp))
+            Text(
+              text = "Pick Part MP4",
+              color = StudioTextPrimary,
+              maxLines = 1,
+              softWrap = false,
+              overflow = TextOverflow.Ellipsis,
+            )
+          }
+
+          OutlinedButton(
+            onClick = { onPickPartAudio(config.selectedPart) },
+            enabled = !isBusy,
+            border = BorderStroke(1.dp, StudioOutline),
+            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 10.dp),
+            modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("pick_part_audio_button"),
+          ) {
+            Icon(Icons.Filled.AudioFile, contentDescription = null, modifier = Modifier.size(16.dp), tint = StudioGreen)
+            Spacer(Modifier.width(6.dp))
+            Text(
+              text = "Pick Part Audio",
+              color = StudioTextPrimary,
+              maxLines = 1,
+              softWrap = false,
+              overflow = TextOverflow.Ellipsis,
+            )
+          }
         }
 
-        OutlinedButton(
-          onClick = { onPickPartAudio(config.selectedPart) },
-          enabled = !isBusy,
-          border = BorderStroke(1.dp, StudioOutline),
-          modifier = Modifier.heightIn(min = 48.dp).testTag("pick_part_audio_button"),
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-          Icon(Icons.Filled.AudioFile, contentDescription = null, modifier = Modifier.size(16.dp), tint = StudioGreen)
-          Spacer(Modifier.width(6.dp))
-          Text("🎵 Pick Part Audio", color = StudioTextPrimary)
-        }
+          OutlinedButton(
+            onClick = onLoadTxt,
+            border = BorderStroke(1.dp, StudioOutline),
+            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 10.dp),
+            modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("load_txt_button"),
+          ) {
+            Icon(Icons.Filled.Description, contentDescription = null, modifier = Modifier.size(16.dp), tint = StudioAmber)
+            Spacer(Modifier.width(6.dp))
+            Text(
+              text = "Load .TXT",
+              color = StudioTextPrimary,
+              maxLines = 1,
+              softWrap = false,
+              overflow = TextOverflow.Ellipsis,
+            )
+          }
 
-        OutlinedButton(
-          onClick = onLoadTxt,
-          border = BorderStroke(1.dp, StudioOutline),
-          modifier = Modifier.heightIn(min = 48.dp).testTag("load_txt_button"),
-        ) {
-          Icon(Icons.Filled.Description, contentDescription = null, modifier = Modifier.size(16.dp), tint = StudioAmber)
-          Spacer(Modifier.width(6.dp))
-          Text("📄 Load .TXT", color = StudioTextPrimary)
-        }
-
-        val isPlayingThisPart = playingAudioPart == config.selectedPart
-        FilledTonalButton(
-          onClick = { onTogglePlayAudio(config.selectedPart) },
-          colors =
-            ButtonDefaults.filledTonalButtonColors(
-              containerColor = if (isPlayingThisPart) StudioRedDim else StudioCardElevated,
-              contentColor = if (isPlayingThisPart) StudioRed else StudioGreen,
-            ),
-          modifier = Modifier.heightIn(min = 48.dp).testTag("play_stop_part_audio_button"),
-        ) {
-          Icon(
-            imageVector = if (isPlayingThisPart) Icons.Filled.Stop else Icons.Filled.PlayArrow,
-            contentDescription = if (isPlayingThisPart) "Stop audio" else "Play audio",
-            modifier = Modifier.size(18.dp),
-          )
-          Spacer(Modifier.width(4.dp))
-          Text(if (isPlayingThisPart) "⏹ Stop Audio" else "▶ Play Audio")
+          val isPlayingThisPart = playingAudioPart == config.selectedPart
+          FilledTonalButton(
+            onClick = { onTogglePlayAudio(config.selectedPart) },
+            colors =
+              ButtonDefaults.filledTonalButtonColors(
+                containerColor = if (isPlayingThisPart) StudioRedDim else StudioCardElevated,
+                contentColor = if (isPlayingThisPart) StudioRed else StudioGreen,
+              ),
+            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 10.dp),
+            modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("play_stop_part_audio_button"),
+          ) {
+            Icon(
+              imageVector = if (isPlayingThisPart) Icons.Filled.Stop else Icons.Filled.PlayArrow,
+              contentDescription = if (isPlayingThisPart) "Stop audio" else "Play audio",
+              modifier = Modifier.size(18.dp),
+            )
+            Spacer(Modifier.width(4.dp))
+            Text(
+              text = if (isPlayingThisPart) "Stop Audio" else "Play Audio",
+              maxLines = 1,
+              softWrap = false,
+              overflow = TextOverflow.Ellipsis,
+            )
+          }
         }
 
         OutlinedButton(
           onClick = { onClearPart(config.selectedPart) },
           enabled = !isBusy,
           border = BorderStroke(1.dp, StudioRed.copy(alpha = 0.5f)),
-          modifier = Modifier.heightIn(min = 48.dp).testTag("clear_part_button"),
+          contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+          modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("clear_part_button"),
         ) {
           Icon(Icons.Filled.DeleteOutline, contentDescription = null, modifier = Modifier.size(16.dp), tint = StudioRed)
           Spacer(Modifier.width(6.dp))
-          Text("🗑️ Clear Part", color = StudioRed)
+          Text(
+            text = "Clear Part P${config.selectedPart}",
+            color = StudioRed,
+            maxLines = 1,
+            softWrap = false,
+            overflow = TextOverflow.Ellipsis,
+          )
         }
       }
     }
@@ -386,7 +457,7 @@ fun DialogueEditorCard(
     shape = RoundedCornerShape(16.dp),
     modifier = Modifier.fillMaxWidth(),
   ) {
-    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
       // Header bar + live char counter
       Row(
         modifier = Modifier.fillMaxWidth(),
@@ -394,24 +465,27 @@ fun DialogueEditorCard(
         verticalAlignment = Alignment.CenterVertically,
       ) {
         Text(
-          text = "Dialogue / Script Block",
-          style = MaterialTheme.typography.titleSmall,
+          text = "DIALOGUE / SCRIPT BLOCK",
+          style = StudioSectionLabelStyle,
           color = StudioCyan,
         )
         Surface(
           color = if (qaResult.charCount in 4000..5000) StudioGreenDim else StudioAmberDim,
+          border = BorderStroke(1.dp, charColor.copy(alpha = 0.45f)),
           shape = RoundedCornerShape(8.dp),
         ) {
           Text(
             text = "Chars: ${String.format(Locale.US, "%,d", qaResult.charCount)}",
-            style = MaterialTheme.typography.labelMedium.copy(fontFamily = JetBrainsMonoFontFamily),
+            style = MaterialTheme.typography.labelSmall.copy(fontFamily = JetBrainsMonoFontFamily),
             color = charColor,
+            maxLines = 1,
+            softWrap = false,
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
           )
         }
       }
 
-      // Action Toolbar: Clear + Paste + Auto-Paste + Auto-Next
+      // Action Toolbar: Clear + Paste + Sanitize + Auto-Pilot + Self-Audit + Auto-Paste + Auto-Next
       Row(
         modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -420,92 +494,103 @@ fun DialogueEditorCard(
         OutlinedButton(
           onClick = onClearDialogue,
           border = BorderStroke(1.dp, StudioOutline),
+          contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
           modifier = Modifier.heightIn(min = 48.dp).testTag("clear_dialogue_button"),
         ) {
           Icon(Icons.Filled.CleaningServices, contentDescription = null, modifier = Modifier.size(16.dp), tint = StudioAmber)
           Spacer(Modifier.width(6.dp))
-          Text("🧹 Clear", color = StudioTextPrimary)
+          Text("Clear", color = StudioTextPrimary, maxLines = 1, softWrap = false)
         }
 
         OutlinedButton(
           onClick = onPasteDialogue,
-          border = BorderStroke(1.dp, StudioCyan.copy(alpha = 0.6f)),
+          border = BorderStroke(1.dp, StudioCyan.copy(alpha = 0.55f)),
+          contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
           modifier = Modifier.heightIn(min = 48.dp).testTag("paste_dialogue_button"),
         ) {
           Icon(Icons.Filled.ContentPaste, contentDescription = null, modifier = Modifier.size(16.dp), tint = StudioCyan)
           Spacer(Modifier.width(6.dp))
-          Text("📋 Paste", color = StudioCyan)
+          Text("Paste", color = StudioCyan, maxLines = 1, softWrap = false)
         }
 
         OutlinedButton(
           onClick = onSanitizeDialogue,
           enabled = !isBusy && dialogueText.isNotBlank(),
-          border = BorderStroke(1.dp, StudioAmber.copy(alpha = 0.6f)),
+          border = BorderStroke(1.dp, StudioAmber.copy(alpha = 0.55f)),
+          contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
           modifier = Modifier.heightIn(min = 48.dp).testTag("sanitize_dialogue_button"),
         ) {
           Icon(Icons.Filled.CleaningServices, contentDescription = null, modifier = Modifier.size(16.dp), tint = StudioAmber)
           Spacer(Modifier.width(6.dp))
-          Text("Sanitize", color = StudioAmber)
+          Text("Sanitize", color = StudioAmber, maxLines = 1, softWrap = false)
         }
 
         OutlinedButton(
           onClick = onOpenAutoPilot,
           enabled = !isBusy,
-          border = BorderStroke(1.dp, StudioCyan.copy(alpha = 0.7f)),
+          border = BorderStroke(1.dp, StudioCyan.copy(alpha = 0.65f)),
+          contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
           modifier = Modifier.heightIn(min = 48.dp).testTag("gemini_autopilot_button"),
         ) {
           Icon(Icons.Filled.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp), tint = StudioCyan)
           Spacer(Modifier.width(6.dp))
-          Text("Auto-Pilot", color = StudioCyan)
+          Text("Auto-Pilot", color = StudioCyan, maxLines = 1, softWrap = false)
         }
 
         OutlinedButton(
           onClick = onRunSelfAudit,
           enabled = !isBusy && dialogueText.isNotBlank(),
-          border = BorderStroke(1.dp, StudioGreen.copy(alpha = 0.7f)),
+          border = BorderStroke(1.dp, StudioGreen.copy(alpha = 0.65f)),
+          contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
           modifier = Modifier.heightIn(min = 48.dp).testTag("gemini_self_audit_button"),
         ) {
           Icon(Icons.Filled.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp), tint = StudioGreen)
           Spacer(Modifier.width(6.dp))
-          Text("Self-Audit", color = StudioGreen)
+          Text("Self-Audit", color = StudioGreen, maxLines = 1, softWrap = false)
         }
 
-        Row(
-          verticalAlignment = Alignment.CenterVertically,
-          modifier =
-            Modifier.clip(RoundedCornerShape(10.dp))
-              .background(StudioCardElevated)
-              .padding(horizontal = 10.dp, vertical = 2.dp),
+        Surface(
+          color = StudioCardElevated,
+          border = BorderStroke(1.dp, StudioOutline),
+          shape = RoundedCornerShape(10.dp),
         ) {
-          Icon(Icons.Filled.Bolt, contentDescription = null, modifier = Modifier.size(16.dp), tint = StudioAmber)
-          Spacer(Modifier.width(4.dp))
-          Text("Auto-Paste", style = MaterialTheme.typography.labelMedium, color = StudioTextPrimary)
-          Spacer(Modifier.width(6.dp))
-          Switch(
-            checked = autoPasteEnabled,
-            onCheckedChange = onAutoPasteToggle,
-            colors = SwitchDefaults.colors(checkedThumbColor = StudioBackground, checkedTrackColor = StudioGreen),
-            modifier = Modifier.testTag("auto_paste_switch"),
-          )
+          Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp),
+          ) {
+            Icon(Icons.Filled.Bolt, contentDescription = null, modifier = Modifier.size(16.dp), tint = StudioAmber)
+            Spacer(Modifier.width(4.dp))
+            Text("Auto-Paste", style = MaterialTheme.typography.labelMedium, color = StudioTextPrimary, maxLines = 1, softWrap = false)
+            Spacer(Modifier.width(6.dp))
+            Switch(
+              checked = autoPasteEnabled,
+              onCheckedChange = onAutoPasteToggle,
+              colors = SwitchDefaults.colors(checkedThumbColor = StudioBackground, checkedTrackColor = StudioGreen),
+              modifier = Modifier.testTag("auto_paste_switch"),
+            )
+          }
         }
 
-        Row(
-          verticalAlignment = Alignment.CenterVertically,
-          modifier =
-            Modifier.clip(RoundedCornerShape(10.dp))
-              .background(StudioCardElevated)
-              .padding(horizontal = 10.dp, vertical = 2.dp),
+        Surface(
+          color = StudioCardElevated,
+          border = BorderStroke(1.dp, StudioOutline),
+          shape = RoundedCornerShape(10.dp),
         ) {
-          Icon(Icons.Filled.SkipNext, contentDescription = null, modifier = Modifier.size(16.dp), tint = StudioCyan)
-          Spacer(Modifier.width(4.dp))
-          Text("Auto-Next", style = MaterialTheme.typography.labelMedium, color = StudioTextPrimary)
-          Spacer(Modifier.width(6.dp))
-          Switch(
-            checked = autoNextPartEnabled,
-            onCheckedChange = onAutoNextToggle,
-            colors = SwitchDefaults.colors(checkedThumbColor = StudioBackground, checkedTrackColor = StudioCyan),
-            modifier = Modifier.testTag("auto_next_switch"),
-          )
+          Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp),
+          ) {
+            Icon(Icons.Filled.SkipNext, contentDescription = null, modifier = Modifier.size(16.dp), tint = StudioCyan)
+            Spacer(Modifier.width(4.dp))
+            Text("Auto-Next", style = MaterialTheme.typography.labelMedium, color = StudioTextPrimary, maxLines = 1, softWrap = false)
+            Spacer(Modifier.width(6.dp))
+            Switch(
+              checked = autoNextPartEnabled,
+              onCheckedChange = onAutoNextToggle,
+              colors = SwitchDefaults.colors(checkedThumbColor = StudioBackground, checkedTrackColor = StudioCyan),
+              modifier = Modifier.testTag("auto_next_switch"),
+            )
+          }
         }
       }
 
@@ -534,18 +619,25 @@ fun DialogueEditorCard(
       )
 
       // Live QA feedback banner
-      if (dialogueText.isNotBlank()) {
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-          qaResult.errors.forEach { err ->
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-              Icon(Icons.Filled.Warning, contentDescription = null, tint = StudioRed, modifier = Modifier.size(16.dp))
-              Text(err, style = MaterialTheme.typography.bodySmall, color = StudioRed)
+      if (dialogueText.isNotBlank() && (qaResult.errors.isNotEmpty() || qaResult.warnings.isNotEmpty())) {
+        Surface(
+          color = StudioCardDeep,
+          border = BorderStroke(1.dp, if (qaResult.errors.isNotEmpty()) StudioRed.copy(alpha = 0.45f) else StudioAmber.copy(alpha = 0.45f)),
+          shape = RoundedCornerShape(10.dp),
+          modifier = Modifier.fillMaxWidth(),
+        ) {
+          Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            qaResult.errors.forEach { err ->
+              Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Icon(Icons.Filled.Warning, contentDescription = null, tint = StudioRed, modifier = Modifier.size(16.dp))
+                Text(err, style = MaterialTheme.typography.bodySmall, color = StudioRed)
+              }
             }
-          }
-          qaResult.warnings.forEach { warn ->
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-              Icon(Icons.Filled.Warning, contentDescription = null, tint = StudioAmber, modifier = Modifier.size(16.dp))
-              Text(warn, style = MaterialTheme.typography.bodySmall, color = StudioAmber)
+            qaResult.warnings.forEach { warn ->
+              Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Icon(Icons.Filled.Warning, contentDescription = null, tint = StudioAmber, modifier = Modifier.size(16.dp))
+                Text(warn, style = MaterialTheme.typography.bodySmall, color = StudioAmber)
+              }
             }
           }
         }
@@ -559,14 +651,18 @@ fun DialogueEditorCard(
             containerColor = StudioGreen,
             contentColor = Color(0xFF002111),
           ),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
         modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp).testTag("download_voice_button"),
       ) {
-        Icon(Icons.Filled.Download, contentDescription = null)
+        Icon(Icons.Filled.Download, contentDescription = null, modifier = Modifier.size(18.dp))
         Spacer(Modifier.width(8.dp))
         Text(
-          text = "▶ Download Voice (Part $selectedPart)",
+          text = "Download Voice (Part $selectedPart)",
           style = MaterialTheme.typography.labelLarge,
           fontWeight = FontWeight.Bold,
+          maxLines = 1,
+          softWrap = false,
+          overflow = TextOverflow.Ellipsis,
         )
       }
     }
@@ -595,17 +691,17 @@ fun RenderControlsCard(
     shape = RoundedCornerShape(16.dp),
     modifier = Modifier.fillMaxWidth(),
   ) {
-    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
       Text(
         text = "RENDER PIPELINE & FILTERS",
-        style = MaterialTheme.typography.titleSmall,
+        style = StudioSectionLabelStyle,
         color = StudioCyan,
       )
 
       // Filter Mode Dropdown + 3s Preview Button
       Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
       ) {
         Box(modifier = Modifier.weight(1f)) {
@@ -613,6 +709,7 @@ fun RenderControlsCard(
             onClick = { filterDropdownExpanded = true },
             enabled = !isBusy,
             border = BorderStroke(1.dp, StudioOutline),
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("filter_mode_dropdown"),
           ) {
             Icon(Icons.Filled.AutoAwesome, contentDescription = null, tint = StudioCyan, modifier = Modifier.size(16.dp))
@@ -621,10 +718,11 @@ fun RenderControlsCard(
               text = config.filterMode.displayName,
               color = StudioTextPrimary,
               maxLines = 1,
+              softWrap = false,
               overflow = TextOverflow.Ellipsis,
               modifier = Modifier.weight(1f),
             )
-            Icon(Icons.Filled.ArrowDropDown, contentDescription = "Select render filter")
+            Icon(Icons.Filled.ArrowDropDown, contentDescription = "Select render filter", tint = StudioTextSecondary)
           }
           DropdownMenu(
             expanded = filterDropdownExpanded,
@@ -650,17 +748,18 @@ fun RenderControlsCard(
               containerColor = StudioCardElevated,
               contentColor = StudioCyan,
             ),
+          contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
           modifier = Modifier.heightIn(min = 48.dp).testTag("filter_preview_button"),
         ) {
           Icon(Icons.Filled.Visibility, contentDescription = null, modifier = Modifier.size(16.dp))
           Spacer(Modifier.width(6.dp))
-          Text("👁️ 3s Filter Preview")
+          Text("3s Filter Preview", maxLines = 1, softWrap = false)
         }
       }
 
       // Turbo Mode + Smart Resume switches
       StudioSwitchRow(
-        label = "⚡ Turbo Mobile Render (Fast / Cool CPU)",
+        label = "Turbo Mobile Render (Fast / Cool CPU)",
         checked = config.turboModeEnabled,
         enabled = !isBusy,
         testTag = "turbo_mode_switch",
@@ -689,6 +788,8 @@ fun RenderControlsCard(
             OutlinedTextFieldDefaults.colors(
               focusedBorderColor = StudioCyan,
               unfocusedBorderColor = StudioOutline,
+              focusedContainerColor = StudioCardDeep,
+              unfocusedContainerColor = StudioCardDeep,
               focusedTextColor = StudioTextPrimary,
               unfocusedTextColor = StudioTextPrimary,
             ),
@@ -701,9 +802,10 @@ fun RenderControlsCard(
               containerColor = StudioCyanDim,
               contentColor = StudioCyan,
             ),
-          modifier = Modifier.heightIn(min = 48.dp).testTag("save_transitions_button"),
+          contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
+          modifier = Modifier.heightIn(min = 52.dp).testTag("save_transitions_button"),
         ) {
-          Text("Save Setting")
+          Text("Save Setting", maxLines = 1, softWrap = false)
         }
       }
 
@@ -715,18 +817,22 @@ fun RenderControlsCard(
         onCheckedChange = onAutoCleanToggle,
       )
 
-      Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+      OutlinedButton(
+        onClick = onRequestTotalZero,
+        enabled = !isBusy,
+        border = BorderStroke(1.dp, StudioRed.copy(alpha = 0.55f)),
+        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
+        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("clear_workspace_total_zero_button"),
       ) {
-        OutlinedButton(
-          onClick = onRequestTotalZero,
-          enabled = !isBusy,
-          border = BorderStroke(1.dp, StudioRed.copy(alpha = 0.6f)),
-          modifier = Modifier.weight(1f).heightIn(min = 50.dp).testTag("clear_workspace_total_zero_button"),
-        ) {
-          Text("🧹 Clear Workspace (TOTAL ZERO)", color = StudioRed, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
+        Icon(Icons.Filled.DeleteOutline, contentDescription = null, modifier = Modifier.size(16.dp), tint = StudioRed)
+        Spacer(Modifier.width(6.dp))
+        Text(
+          text = "Clear Workspace (TOTAL ZERO)",
+          color = StudioRed,
+          maxLines = 1,
+          softWrap = false,
+          overflow = TextOverflow.Ellipsis,
+        )
       }
 
       Button(
@@ -737,14 +843,18 @@ fun RenderControlsCard(
             containerColor = StudioCyan,
             contentColor = Color(0xFF002022),
           ),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
         modifier = Modifier.fillMaxWidth().heightIn(min = 54.dp).testTag("smart_render_button"),
       ) {
-        Icon(Icons.Filled.RocketLaunch, contentDescription = null)
+        Icon(Icons.Filled.RocketLaunch, contentDescription = null, modifier = Modifier.size(20.dp))
         Spacer(Modifier.width(8.dp))
         Text(
-          text = "🚀 1-Click Smart Render",
+          text = "1-Click Smart Render",
           style = MaterialTheme.typography.titleSmall,
           fontWeight = FontWeight.Bold,
+          maxLines = 1,
+          softWrap = false,
+          overflow = TextOverflow.Ellipsis,
         )
       }
     }
@@ -798,7 +908,7 @@ fun ProgressAndLogCard(
     shape = RoundedCornerShape(16.dp),
     modifier = Modifier.fillMaxWidth(),
   ) {
-    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
       Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -806,9 +916,9 @@ fun ProgressAndLogCard(
       ) {
         Text(
           text = if (progress.isRunning) "${progress.taskTitle} • ${progress.progressPercent}%" else "PROGRESS & SYSTEM LOG",
-          style = MaterialTheme.typography.titleSmall,
+          style = if (progress.isRunning) MaterialTheme.typography.titleSmall else StudioSectionLabelStyle,
           color = if (progress.isRunning) StudioAmber else StudioCyan,
-          modifier = Modifier.weight(1f),
+          modifier = Modifier.weight(1f).padding(end = 8.dp),
           maxLines = 1,
           overflow = TextOverflow.Ellipsis,
         )
@@ -826,8 +936,10 @@ fun ProgressAndLogCard(
             }
           Text(
             text = timingLabel,
-            style = MaterialTheme.typography.labelMedium.copy(fontFamily = JetBrainsMonoFontFamily),
+            style = MaterialTheme.typography.labelSmall.copy(fontFamily = JetBrainsMonoFontFamily),
             color = StudioAmber,
+            maxLines = 1,
+            softWrap = false,
           )
         }
       }
@@ -864,14 +976,17 @@ fun ProgressAndLogCard(
                 containerColor = StudioRed,
                 contentColor = Color.White,
               ),
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
             modifier = Modifier.heightIn(min = 48.dp).testTag("cancel_pipeline_button"),
           ) {
-            Text("⏹ Cancel", fontWeight = FontWeight.Bold)
+            Icon(Icons.Filled.Stop, contentDescription = null, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(4.dp))
+            Text("Cancel", fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
           }
         }
       }
 
-      HorizontalDivider(color = StudioOutline.copy(alpha = 0.6f))
+      HorizontalDivider(color = StudioOutline)
 
       Row(
         modifier = Modifier.fillMaxWidth(),
@@ -884,7 +999,7 @@ fun ProgressAndLogCard(
           color = StudioTextSecondary,
         )
         TextButton(onClick = onClearLogs, modifier = Modifier.testTag("clear_logs_button")) {
-          Text("Clear Log", color = StudioTextSecondary)
+          Text("Clear Log", color = StudioTextSecondary, maxLines = 1, softWrap = false)
         }
       }
 
@@ -895,7 +1010,7 @@ fun ProgressAndLogCard(
             .clip(RoundedCornerShape(10.dp))
             .background(StudioCardDeep)
             .padding(10.dp)
-            .verticalScroll(logScrollState)
+            .verticalScroll(logScrollState),
       ) {
         if (logs.isEmpty()) {
           Text(

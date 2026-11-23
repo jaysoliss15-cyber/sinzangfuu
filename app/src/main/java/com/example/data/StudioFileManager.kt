@@ -26,6 +26,7 @@ class StudioFileManager(private val context: Context) {
   val outroFile: File = File(assetsDir, "outro_vanity_card.mp4")
   val bgmFile: File = File(assetsDir, "the_dread.mp3")
   val outputDir: File = File(context.filesDir, "output")
+  val godPromptFile: File = File(context.filesDir, "god_prompt_master.txt")
 
   init {
     ensureCoreDirectories()
@@ -173,6 +174,97 @@ class StudioFileManager(private val context: Context) {
     context.contentResolver.openInputStream(uri)?.bufferedReader(Charsets.UTF_8)?.use {
       it.readText()
     } ?: throw IllegalStateException("Unable to read selected text file.")
+
+  fun importGodPromptFile(uri: Uri): GodPromptImportResult {
+    val displayName = queryDisplayName(uri)?.trim().orEmpty().ifBlank { "god_prompt.txt" }
+    val mime = context.contentResolver.getType(uri)?.lowercase(Locale.ROOT).orEmpty()
+    val ext = displayName.substringAfterLast('.', "").lowercase(Locale.ROOT)
+    val allowedExt = ext in setOf("txt", "csv")
+    val allowedMime =
+      mime == "text/plain" ||
+        mime == "text/csv" ||
+        mime == "text/comma-separated-values" ||
+        mime == "application/csv" ||
+        mime == "application/vnd.ms-excel"
+    if (!allowedExt && !allowedMime) {
+      throw IllegalArgumentException("Unsupported file \"$displayName\". Please pick a .txt or .csv file.")
+    }
+
+    val rawContent = readUtf8Text(uri).replace("\r\n", "\n").replace('\r', '\n').trim()
+    if (rawContent.isEmpty()) {
+      throw IllegalArgumentException("Selected file \"$displayName\" is empty.")
+    }
+
+    val tmp = File(context.filesDir, ".tmp_god_prompt_master.txt")
+    try {
+      tmp.writeText(rawContent, Charsets.UTF_8)
+      if (godPromptFile.exists()) godPromptFile.delete()
+      if (!tmp.renameTo(godPromptFile)) {
+        tmp.copyTo(godPromptFile, overwrite = true)
+        tmp.delete()
+      }
+    } catch (e: Exception) {
+      tmp.delete()
+      throw e
+    }
+
+    val charCount = rawContent.length
+    val wordCount = countWordsFast(rawContent)
+    val updatedAt = System.currentTimeMillis()
+    val preview = buildShortPreview(rawContent)
+
+    return GodPromptImportResult(
+      fileName = displayName,
+      charCount = charCount,
+      wordCount = wordCount,
+      updatedAt = updatedAt,
+      previewText = preview,
+    )
+  }
+
+  fun readGodPromptPreview(maxChars: Int = 260): String {
+    if (!godPromptFile.exists() || godPromptFile.length() == 0L) return ""
+    return runCatching {
+      godPromptFile.bufferedReader(Charsets.UTF_8).use { reader ->
+        val buffer = CharArray(maxChars)
+        val readCount = reader.read(buffer, 0, maxChars)
+        if (readCount <= 0) "" else buildShortPreview(String(buffer, 0, readCount))
+      }
+    }.getOrDefault("")
+  }
+
+  fun clearGodPromptFile() {
+    if (godPromptFile.exists()) {
+      godPromptFile.delete()
+    }
+  }
+
+  private fun buildShortPreview(text: String): String {
+    val lines =
+      text
+        .replace("\r\n", "\n")
+        .replace('\r', '\n')
+        .lineSequence()
+        .map { it.trim() }
+        .filter { it.isNotEmpty() }
+        .take(4)
+        .toList()
+    return lines.joinToString("\n").take(260)
+  }
+
+  private fun countWordsFast(text: String): Int {
+    var count = 0
+    var inWord = false
+    for (ch in text) {
+      if (ch.isWhitespace()) {
+        inWord = false
+      } else if (!inWord) {
+        count++
+        inWord = true
+      }
+    }
+    return count
+  }
 
   fun clearPartAudioFiles(partNum: Int) {
     val partDir = getPartDir(partNum)

@@ -11,15 +11,15 @@ import androidx.compose.ui.unit.dp
 private val MissingPageDarkColorScheme =
   darkColorScheme(
     primary = StudioCyan,
-    onPrimary = Color(0xFF002022),
+    onPrimary = Color(0xFF001F24),
     primaryContainer = StudioCyanDim,
     onPrimaryContainer = StudioCyanOnContainer,
     secondary = StudioGreen,
-    onSecondary = Color(0xFF002111),
+    onSecondary = Color(0xFF002114),
     secondaryContainer = StudioGreenDim,
     onSecondaryContainer = StudioGreenOnContainer,
     tertiary = StudioAmber,
-    onTertiary = Color(0xFF261900),
+    onTertiary = Color(0xFF261800),
     tertiaryContainer = StudioAmberDim,
     onTertiaryContainer = StudioAmber,
     background = StudioBackground,
@@ -42,10 +42,10 @@ private val MissingPageDarkColorScheme =
 
 val StudioShapes =
   Shapes(
-    small = RoundedCornerShape(8.dp),
+    small = RoundedCornerShape(10.dp),
     medium = RoundedCornerShape(14.dp),
-    large = RoundedCornerShape(18.dp),
-    extraLarge = RoundedCornerShape(24.dp),
+    large = RoundedCornerShape(16.dp),
+    extraLarge = RoundedCornerShape(22.dp),
   )
 
 @Composable

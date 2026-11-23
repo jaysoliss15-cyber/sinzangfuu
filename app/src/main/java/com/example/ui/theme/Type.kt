@@ -34,6 +34,14 @@ val TabularMonoStyle = TextStyle(
   fontFeatureSettings = "tnum",
 )
 
+val StudioSectionLabelStyle = TextStyle(
+  fontFamily = SpaceGroteskFontFamily,
+  fontWeight = FontWeight.Bold,
+  fontSize = 11.sp,
+  lineHeight = 16.sp,
+  letterSpacing = 1.2.sp,
+)
+
 val Typography =
   Typography(
     displaySmall =

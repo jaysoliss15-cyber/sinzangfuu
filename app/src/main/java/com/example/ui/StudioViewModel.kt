@@ -7,6 +7,7 @@ import android.media.MediaPlayer
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import com.example.StudioApplication
+import com.example.data.LlmProvider
 import com.example.data.LogLevel
 import com.example.data.RenderFilterMode
 import java.security.MessageDigest
@@ -30,6 +31,8 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
   val previewTarget = controller.previewTarget
   val lowStorageWarning = controller.lowStorageWarning
   val snackbarEvent = controller.snackbarEvent
+  val godPromptPreview = controller.godPromptPreview
+  val modelDetectionState = controller.modelDetectionState
 
   private var audioPlayer: MediaPlayer? = null
   private val _playingAudioPart = MutableStateFlow<Int?>(null)
@@ -109,24 +112,48 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     voiceId: String,
     modelId: String,
     sfxModelId: String,
-    geminiApiKey: String,
-    geminiModel: String,
-    scriptWriterGodPrompt: String,
+    llmProvider: LlmProvider,
+    llmBaseUrl: String,
+    llmApiKey: String,
+    llmModel: String,
   ) {
+    val normalizedBaseUrl =
+      if (llmProvider.isBaseUrlEditable) {
+        llmBaseUrl.trim().trimEnd('/')
+      } else {
+        llmBaseUrl.trim().ifEmpty { llmProvider.defaultBaseUrl }.trimEnd('/')
+      }
+    val effectiveModel =
+      llmModel.trim().ifEmpty { llmProvider.defaultModel }
     controller.updateConfig {
       it.copy(
         apiKey = apiKey.trim(),
         voiceId = voiceId.trim().ifEmpty { com.example.data.StudioConfig.DEFAULT_VOICE_ID },
         modelId = modelId.trim().ifEmpty { com.example.data.StudioConfig.DEFAULT_MODEL_ID },
         sfxModelId = sfxModelId.trim().ifEmpty { com.example.data.StudioConfig.DEFAULT_SFX_MODEL_ID },
-        geminiApiKey = geminiApiKey.trim(),
-        geminiModel = geminiModel.trim().ifEmpty { com.example.data.StudioConfig.DEFAULT_GEMINI_MODEL },
-        scriptWriterGodPrompt = scriptWriterGodPrompt,
+        llmProvider = llmProvider,
+        llmBaseUrl = normalizedBaseUrl,
+        llmApiKey = llmApiKey.trim(),
+        llmModel = effectiveModel,
       )
     }
-    controller.appendLog("Saved ElevenLabs & Gemini Auto-Pilot API settings.", LogLevel.SUCCESS)
+    controller.appendLog(
+      "Saved ElevenLabs & ${llmProvider.displayName} API settings.",
+      LogLevel.SUCCESS,
+    )
     controller.emitSnackbar("All API settings saved")
   }
+
+  fun detectAvailableModels(
+    provider: LlmProvider,
+    baseUrl: String,
+    apiKey: String,
+  ) = controller.detectAvailableModels(provider = provider, baseUrl = baseUrl, apiKey = apiKey)
+
+  fun clearDetectedModels() = controller.clearDetectedModels()
+
+  fun importGodPromptFile(uri: Uri) = controller.importGodPromptFile(uri)
+  fun clearGodPromptFile() = controller.clearGodPromptFile()
 
   fun readClipboard(): String? = readClipboardPlainText()
 

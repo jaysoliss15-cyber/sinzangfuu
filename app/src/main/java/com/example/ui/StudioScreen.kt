@@ -3,12 +3,11 @@ package com.example.ui
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -25,6 +24,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.LogEntry
 import com.example.data.LowStorageWarning
 import com.example.data.PartStatus
@@ -46,6 +46,72 @@ import com.example.ui.theme.StudioRed
 import com.example.ui.theme.StudioTextMuted
 import com.example.ui.theme.StudioTextPrimary
 import java.util.Locale
+
+/**
+ * Isolated Studio tab route so high-frequency progress/log emissions only recompose StudioScreen.
+ */
+@Composable
+fun StudioTabRoute(
+  viewModel: StudioViewModel,
+  onPickPartVideo: (Int) -> Unit,
+  onPickPartAudio: (Int) -> Unit,
+  onLoadTxt: () -> Unit,
+  modifier: Modifier = Modifier,
+) {
+  val config by viewModel.config.collectAsStateWithLifecycle()
+  val partStatuses by viewModel.partStatuses.collectAsStateWithLifecycle()
+  val dialogueText by viewModel.dialogueText.collectAsStateWithLifecycle()
+  val qaResult by viewModel.qaResult.collectAsStateWithLifecycle()
+  val progress by viewModel.progress.collectAsStateWithLifecycle()
+  val logs by viewModel.logs.collectAsStateWithLifecycle()
+  val playingAudioPart by viewModel.playingAudioPart.collectAsStateWithLifecycle()
+  val lowStorageWarning by viewModel.lowStorageWarning.collectAsStateWithLifecycle()
+
+  StudioScreen(
+    config = config,
+    partStatuses = partStatuses,
+    dialogueText = dialogueText,
+    qaResult = qaResult,
+    progress = progress,
+    logs = logs,
+    playingAudioPart = playingAudioPart,
+    lowStorageWarning = lowStorageWarning,
+    onUpdatePartFolders = { viewModel.updatePartFolders(it) },
+    onSelectPart = { viewModel.selectPart(it) },
+    onPickPartVideo = onPickPartVideo,
+    onPickPartAudio = onPickPartAudio,
+    onLoadTxt = onLoadTxt,
+    onTogglePlayAudio = { viewModel.togglePlayPartAudio(it) },
+    onClearPart = { viewModel.clearPart(it) },
+    onDialogueChange = { viewModel.onDialogueChanged(it) },
+    onClearDialogue = { viewModel.clearDialogue() },
+    onPasteDialogue = { viewModel.pasteFromClipboard() },
+    onSanitizeDialogue = { viewModel.sanitizeDialogue() },
+    onRunGeminiAutoPilot = { viewModel.runGeminiAutoPilot(it) },
+    onRunGeminiSelfAudit = { viewModel.runGeminiSelfAudit() },
+    onReadClipboard = { viewModel.readClipboard() },
+    onAutoPilotFullAutoToggle = { viewModel.setAutoPilotFullAuto(it) },
+    onRunAutoPilotEpisode = { topic, fullAuto ->
+      viewModel.runAutoPilotEpisode(topic, fullAuto)
+    },
+    onAutoPasteToggle = { viewModel.setAutoPasteEnabled(it) },
+    onAutoNextToggle = { viewModel.setAutoNextPartEnabled(it) },
+    onDownloadVoice = { viewModel.startDownloadVoice() },
+    onFilterSelected = { viewModel.setFilterMode(it) },
+    onPreviewFilter = { viewModel.startFilterPreview() },
+    onTurboToggle = { viewModel.setTurboModeEnabled(it) },
+    onSmartResumeToggle = { viewModel.setSmartResumeEnabled(it) },
+    onSaveTransitions = { viewModel.saveTransitionsAfter(it) },
+    onAutoCleanToggle = { viewModel.setAutoCleanAfterExport(it) },
+    onClearWorkspaceTotalZero = { viewModel.clearWorkspaceTotalZero() },
+    onStartSmartRender = { viewModel.startSmartRender(ignoreLowStorage = false) },
+    onConfirmLowStorageRender = { viewModel.startSmartRender(ignoreLowStorage = true) },
+    onDismissLowStorageWarning = { viewModel.dismissLowStorageWarning() },
+    onCancelActiveTask = { viewModel.cancelActiveTask() },
+    onClearLogs = { viewModel.clearLogs() },
+    modifier = modifier,
+  )
+}
 
 @Composable
 fun StudioScreen(
@@ -98,11 +164,11 @@ fun StudioScreen(
     AlertDialog(
       onDismissRequest = { showAutoPilotDialog = false },
       containerColor = StudioCard,
-      title = { Text("Gemini Auto-Pilot (Part ${config.selectedPart})", color = StudioCyan) },
+      title = { Text("${config.llmProvider.displayName} Auto-Pilot (Part ${config.selectedPart})", color = StudioCyan) },
       text = {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
           Text(
-            text = "Enter a horror/documentary topic, scene outline, or story brief. Gemini will draft Part ${config.selectedPart}, run Self-Audit, and repair any QA issues.",
+            text = "Enter a horror/documentary topic, scene outline, or story brief. ${config.llmProvider.displayName} will draft Part ${config.selectedPart}, run Self-Audit, and repair any QA issues.",
             color = StudioTextPrimary,
           )
           OutlinedTextField(
@@ -138,7 +204,7 @@ fun StudioScreen(
           enabled = autoPilotTopicInput.isNotBlank() && !progress.isRunning,
           colors = ButtonDefaults.buttonColors(containerColor = StudioCyan, contentColor = Color(0xFF002022)),
         ) {
-          Text("Generate & Audit")
+          Text("Generate & Audit", maxLines = 1, softWrap = false)
         }
       },
       dismissButton = {
@@ -166,7 +232,7 @@ fun StudioScreen(
           },
           colors = ButtonDefaults.buttonColors(containerColor = StudioRed, contentColor = Color.White),
         ) {
-          Text("Wipe Workspace")
+          Text("Wipe Workspace", maxLines = 1, softWrap = false)
         }
       },
       dismissButton = {
@@ -191,7 +257,7 @@ fun StudioScreen(
           onClick = onConfirmLowStorageRender,
           colors = ButtonDefaults.buttonColors(containerColor = StudioAmber, contentColor = Color.Black),
         ) {
-          Text("Render Anyway")
+          Text("Render Anyway", maxLines = 1, softWrap = false)
         }
       },
       dismissButton = {
@@ -201,74 +267,81 @@ fun StudioScreen(
   }
 
   Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
-    Column(
-      modifier =
-        Modifier.widthIn(max = 820.dp)
-          .fillMaxWidth()
-          .verticalScroll(rememberScrollState())
-          .padding(horizontal = 14.dp, vertical = 12.dp),
-      verticalArrangement = Arrangement.spacedBy(12.dp),
+    LazyColumn(
+      modifier = Modifier.widthIn(max = 820.dp).fillMaxWidth(),
+      contentPadding = PaddingValues(16.dp),
+      verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-      PartWorkspaceCard(
-        config = config,
-        partStatuses = partStatuses,
-        playingAudioPart = playingAudioPart,
-        isBusy = progress.isRunning,
-        onUpdatePartFolders = onUpdatePartFolders,
-        onSelectPart = onSelectPart,
-        onPickPartVideo = onPickPartVideo,
-        onPickPartAudio = onPickPartAudio,
-        onLoadTxt = onLoadTxt,
-        onTogglePlayAudio = onTogglePlayAudio,
-        onClearPart = onClearPart,
-      )
+      item(key = "part_workspace") {
+        PartWorkspaceCard(
+          config = config,
+          partStatuses = partStatuses,
+          playingAudioPart = playingAudioPart,
+          isBusy = progress.isRunning,
+          onUpdatePartFolders = onUpdatePartFolders,
+          onSelectPart = onSelectPart,
+          onPickPartVideo = onPickPartVideo,
+          onPickPartAudio = onPickPartAudio,
+          onLoadTxt = onLoadTxt,
+          onTogglePlayAudio = onTogglePlayAudio,
+          onClearPart = onClearPart,
+        )
+      }
 
-      AutoPilotCard(
-        partCount = config.partCount,
-        fullAuto = config.autoPilotFullAuto,
-        isBusy = progress.isRunning,
-        onReadClipboard = onReadClipboard,
-        onFullAutoToggle = onAutoPilotFullAutoToggle,
-        onRunAutoPilotEpisode = onRunAutoPilotEpisode,
-      )
+      item(key = "autopilot_card") {
+        AutoPilotCard(
+          partCount = config.partCount,
+          fullAuto = config.autoPilotFullAuto,
+          isBusy = progress.isRunning,
+          onReadClipboard = onReadClipboard,
+          onFullAutoToggle = onAutoPilotFullAutoToggle,
+          onRunAutoPilotEpisode = onRunAutoPilotEpisode,
+        )
+      }
 
-      DialogueEditorCard(
-        dialogueText = dialogueText,
-        qaResult = qaResult,
-        selectedPart = config.selectedPart,
-        autoPasteEnabled = config.autoPasteEnabled,
-        autoNextPartEnabled = config.autoNextPartEnabled,
-        isBusy = progress.isRunning,
-        onDialogueChange = onDialogueChange,
-        onClearDialogue = onClearDialogue,
-        onPasteDialogue = onPasteDialogue,
-        onSanitizeDialogue = onSanitizeDialogue,
-        onOpenAutoPilot = { showAutoPilotDialog = true },
-        onRunSelfAudit = onRunGeminiSelfAudit,
-        onAutoPasteToggle = onAutoPasteToggle,
-        onAutoNextToggle = onAutoNextToggle,
-        onDownloadVoice = onDownloadVoice,
-      )
+      item(key = "dialogue_editor") {
+        DialogueEditorCard(
+          dialogueText = dialogueText,
+          qaResult = qaResult,
+          selectedPart = config.selectedPart,
+          autoPasteEnabled = config.autoPasteEnabled,
+          autoNextPartEnabled = config.autoNextPartEnabled,
+          isBusy = progress.isRunning,
+          onDialogueChange = onDialogueChange,
+          onClearDialogue = onClearDialogue,
+          onPasteDialogue = onPasteDialogue,
+          onSanitizeDialogue = onSanitizeDialogue,
+          onOpenAutoPilot = { showAutoPilotDialog = true },
+          onRunSelfAudit = onRunGeminiSelfAudit,
+          onAutoPasteToggle = onAutoPasteToggle,
+          onAutoNextToggle = onAutoNextToggle,
+          onDownloadVoice = onDownloadVoice,
+        )
+      }
 
-      RenderControlsCard(
-        config = config,
-        isBusy = progress.isRunning,
-        onFilterSelected = onFilterSelected,
-        onPreviewFilter = onPreviewFilter,
-        onTurboToggle = onTurboToggle,
-        onSmartResumeToggle = onSmartResumeToggle,
-        onSaveTransitions = onSaveTransitions,
-        onAutoCleanToggle = onAutoCleanToggle,
-        onRequestTotalZero = { showTotalZeroConfirm = true },
-        onStartSmartRender = onStartSmartRender,
-      )
+      item(key = "render_controls") {
+        RenderControlsCard(
+          config = config,
+          isBusy = progress.isRunning,
+          onFilterSelected = onFilterSelected,
+          onPreviewFilter = onPreviewFilter,
+          onTurboToggle = onTurboToggle,
+          onSmartResumeToggle = onSmartResumeToggle,
+          onSaveTransitions = onSaveTransitions,
+          onAutoCleanToggle = onAutoCleanToggle,
+          onRequestTotalZero = { showTotalZeroConfirm = true },
+          onStartSmartRender = onStartSmartRender,
+        )
+      }
 
-      ProgressAndLogCard(
-        progress = progress,
-        logs = logs,
-        onCancel = onCancelActiveTask,
-        onClearLogs = onClearLogs,
-      )
+      item(key = "progress_log") {
+        ProgressAndLogCard(
+          progress = progress,
+          logs = logs,
+          onCancel = onCancelActiveTask,
+          onClearLogs = onClearLogs,
+        )
+      }
     }
   }
 }

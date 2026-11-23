@@ -237,4 +237,61 @@ class StudioPipelineDomainTest {
       assertFalse(outcome.qaResult.hasFatalDigits)
       assertTrue(outcome.cleanScript.contains("nineteen ninety-four"))
     }
+
+  @Test
+  fun `gemini script client loads system instruction from godPromptFile on IO`() =
+    runTest {
+      val tmpFile = java.io.File.createTempFile("god_prompt_test", ".txt")
+      try {
+        tmpFile.writeText("Follow dark documentary tone strictly.")
+        val logMessages = mutableListOf<String>()
+        val client =
+          GeminiScriptClient(
+            godPromptFile = tmpFile,
+            generateRawOverride = { _ ->
+              """
+              The hallway tape continued spinning in silence.
+              [SFX: subtle magnetic tape hiss]
+              ...
+              ...
+              """.trimIndent()
+            },
+          )
+
+        val outcome =
+          client.runAutoPilotAndAudit(
+            topicOrDraft = "The hallway tape continued spinning.",
+            partNumber = 1,
+            generateFromTopic = true,
+            onLog = { msg, _ -> logMessages += msg },
+          )
+
+        assertTrue(outcome.qaResult.isValid)
+        assertTrue(
+          logMessages.any {
+            it.contains("Loaded master God Prompt (38 chars) from ${tmpFile.name}")
+          }
+        )
+      } finally {
+        tmpFile.delete()
+      }
+    }
+
+  @Test
+  fun `normalizes provider base urls cleanly`() {
+    assertEquals(
+      "https://api.openai.com/v1",
+      GeminiScriptClient.normalizeBaseUrl(
+        com.example.data.LlmProvider.CUSTOM,
+        "https://api.openai.com/v1/chat/completions/",
+      ),
+    )
+    assertEquals(
+      "https://openrouter.ai/api/v1",
+      GeminiScriptClient.normalizeBaseUrl(
+        com.example.data.LlmProvider.OPENROUTER,
+        "https://openrouter.ai/api/v1/models",
+      ),
+    )
+  }
 }
