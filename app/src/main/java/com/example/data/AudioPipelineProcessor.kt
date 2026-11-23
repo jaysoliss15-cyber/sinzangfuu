@@ -1,17 +1,21 @@
 package com.example.data
 
 import com.example.domain.ScriptValidator
+import com.example.domain.StrictCleanDialogueSanitizer
 import java.io.File
 import java.util.Locale
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 class AudioPipelineProcessor(
   private val fileManager: StudioFileManager,
   private val elevenLabsClient: ElevenLabsClient,
   private val ffmpegExecutor: FfmpegExecutor,
 ) {
+  private val singleFlightMutex = Mutex()
   private sealed interface ExpandedWorkItem {
     data class SpeechChunk(val text: String, val index: Int) : ExpandedWorkItem
     data class SfxCue(val prompt: String, val index: Int) : ExpandedWorkItem
@@ -25,8 +29,16 @@ class AudioPipelineProcessor(
     onProgress: (percent: Int, step: String, eta: String) -> Unit,
     onLog: (String, LogLevel) -> Unit,
   ) {
-    require(qaResult.isValid) {
+    singleFlightMutex.withLock {
+      require(qaResult.isValid && !qaResult.hasFatalDigits) {
       qaResult.errors.firstOrNull() ?: "Script QA validation failed."
+    }
+    require(!StrictCleanDialogueSanitizer.hasContaminatedDirectives(qaResult.cleanedTranscript)) {
+      "Contaminated metadata/notes detected in transcript. Run Sanitize/Self-Audit before ElevenLabs TTS."
+    }
+    val revalidated = ScriptValidator.validateScript(qaResult.cleanedTranscript)
+    require(!revalidated.hasFatalDigits) {
+      "FATAL ERROR: Numerical digits detected in cleaned narration. Aborting before ElevenLabs TTS."
     }
     require(config.apiKey.isNotBlank()) {
       "ElevenLabs API Key is missing. Configure it in API & Settings."
@@ -119,12 +131,16 @@ class AudioPipelineProcessor(
         tmpWav.delete()
         throw e
       }
-      return
+      return@withLock
     }
 
     // Multi-segment path using _audio_generation_work/
     fileManager.clearPartAudioFiles(partNumber)
-    val workDir = File(partDir, "_audio_generation_work").apply { mkdirs() }
+    val workDir = File(partDir, "_audio_generation_work")
+    if (workDir.exists()) {
+      workDir.deleteRecursively()
+    }
+    workDir.mkdirs()
     val speechWavs = mutableListOf<File>()
     val mixWavs = mutableListOf<File>()
 
@@ -235,6 +251,7 @@ class AudioPipelineProcessor(
       tmpSpeechConcat.delete()
       tmpMixConcat.delete()
       throw e
+    }
     }
   }
 

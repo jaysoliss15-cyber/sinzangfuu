@@ -92,6 +92,7 @@ import com.example.ui.theme.StudioTextSecondary
 class MainActivity : ComponentActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
+    configureAppCheck(this, intent)
     enableEdgeToEdge()
     setContent {
       MissingPageStudioTheme {
@@ -396,6 +397,9 @@ fun MissingPageStudioApp(
               onDialogueChange = { viewModel.onDialogueChanged(it) },
               onClearDialogue = { viewModel.clearDialogue() },
               onPasteDialogue = { viewModel.pasteFromClipboard() },
+              onSanitizeDialogue = { viewModel.sanitizeDialogue() },
+              onRunGeminiAutoPilot = { viewModel.runGeminiAutoPilot(it) },
+              onRunGeminiSelfAudit = { viewModel.runGeminiSelfAudit() },
               onAutoPasteToggle = { viewModel.setAutoPasteEnabled(it) },
               onAutoNextToggle = { viewModel.setAutoNextPartEnabled(it) },
               onDownloadVoice = { viewModel.startDownloadVoice() },

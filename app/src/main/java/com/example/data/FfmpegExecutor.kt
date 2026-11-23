@@ -114,6 +114,11 @@ class FfmpegExecutor(private val context: Context) {
       val processBuilder = ProcessBuilder(command).redirectErrorStream(true)
       val process = processBuilder.start()
       activeProcess.set(process)
+      if (cancelRequested.get()) {
+        runCatching { process.destroyForcibly() }
+        activeProcess.compareAndSet(process, null)
+        throw CancellationException("Process cancelled by user")
+      }
 
       val outputBuffer = StringBuilder()
       try {

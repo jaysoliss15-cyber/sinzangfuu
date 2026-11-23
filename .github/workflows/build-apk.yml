@@ -48,26 +48,41 @@ jobs:
 
           if [ ! -s "$FFMPEG_SO" ] || [ ! -s "$FFPROBE_SO" ]; then
             echo "Static arm64 FFmpeg binaries missing; fetching..."
+            TMP_STAGE=$(mktemp -d)
+            trap 'docker rm -f static-ffmpeg-extract >/dev/null 2>&1 || true; rm -rf "$TMP_STAGE"' EXIT
+
             if command -v docker >/dev/null 2>&1; then
-              if docker pull --platform linux/arm64 mwader/static-ffmpeg:latest; then
+              (
+                set +e
+                docker pull --platform linux/arm64 mwader/static-ffmpeg:latest && \
+                  (docker rm -f static-ffmpeg-extract >/dev/null 2>&1 || true) && \
+                  docker create --platform linux/arm64 --name static-ffmpeg-extract mwader/static-ffmpeg:latest /bin/true && \
+                  docker cp static-ffmpeg-extract:/ffmpeg "$TMP_STAGE/libffmpeg.so" && \
+                  docker cp static-ffmpeg-extract:/ffprobe "$TMP_STAGE/libffprobe.so"
+                EXIT_STATUS=$?
                 docker rm -f static-ffmpeg-extract >/dev/null 2>&1 || true
-                docker create --platform linux/arm64 --name static-ffmpeg-extract mwader/static-ffmpeg:latest /bin/true
-                docker cp static-ffmpeg-extract:/ffmpeg "$FFMPEG_SO"
-                docker cp static-ffmpeg-extract:/ffprobe "$FFPROBE_SO"
-                docker rm -f static-ffmpeg-extract >/dev/null 2>&1 || true
-              fi
+                exit $EXIT_STATUS
+              ) || echo "Docker static-ffmpeg extraction failed; cleaning staging files and falling back to release archive..."
             fi
 
-            if [ ! -s "$FFMPEG_SO" ] || [ ! -s "$FFPROBE_SO" ]; then
+            if [ -s "$TMP_STAGE/libffmpeg.so" ] && [ -s "$TMP_STAGE/libffprobe.so" ]; then
+              mv -f "$TMP_STAGE/libffmpeg.so" "$FFMPEG_SO"
+              mv -f "$TMP_STAGE/libffprobe.so" "$FFPROBE_SO"
+            else
+              rm -f "$TMP_STAGE/libffmpeg.so" "$TMP_STAGE/libffprobe.so" "$FFMPEG_SO" "$FFPROBE_SO"
               echo "Falling back to John Van Sickle static arm64 release archive..."
-              TMP_DIR=$(mktemp -d)
-              curl -fsSL "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-arm64-static.tar.xz" -o "$TMP_DIR/ffmpeg.tar.xz"
-              tar -xJf "$TMP_DIR/ffmpeg.tar.xz" -C "$TMP_DIR"
-              FOUND_FFMPEG=$(find "$TMP_DIR" -type f -name "ffmpeg" | head -n 1)
-              FOUND_FFPROBE=$(find "$TMP_DIR" -type f -name "ffprobe" | head -n 1)
-              cp "$FOUND_FFMPEG" "$FFMPEG_SO"
-              cp "$FOUND_FFPROBE" "$FFPROBE_SO"
-              rm -rf "$TMP_DIR"
+              curl -fsSL --retry 3 --retry-delay 5 "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-arm64-static.tar.xz" -o "$TMP_STAGE/ffmpeg.tar.xz"
+              tar -xJf "$TMP_STAGE/ffmpeg.tar.xz" -C "$TMP_STAGE"
+              FOUND_FFMPEG=$(find "$TMP_STAGE" -type f -name "ffmpeg" | head -n 1)
+              FOUND_FFPROBE=$(find "$TMP_STAGE" -type f -name "ffprobe" | head -n 1)
+              if [ -z "$FOUND_FFMPEG" ] || [ ! -s "$FOUND_FFMPEG" ] || [ -z "$FOUND_FFPROBE" ] || [ ! -s "$FOUND_FFPROBE" ]; then
+                echo "ERROR: Could not locate valid ffmpeg/ffprobe binaries inside extracted archive"
+                exit 1
+              fi
+              cp "$FOUND_FFMPEG" "$TMP_STAGE/libffmpeg.so"
+              cp "$FOUND_FFPROBE" "$TMP_STAGE/libffprobe.so"
+              mv -f "$TMP_STAGE/libffmpeg.so" "$FFMPEG_SO"
+              mv -f "$TMP_STAGE/libffprobe.so" "$FFPROBE_SO"
             fi
           fi
 

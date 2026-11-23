@@ -371,6 +371,9 @@ fun DialogueEditorCard(
   onDialogueChange: (String) -> Unit,
   onClearDialogue: () -> Unit,
   onPasteDialogue: () -> Unit,
+  onSanitizeDialogue: () -> Unit,
+  onOpenAutoPilot: () -> Unit,
+  onRunSelfAudit: () -> Unit,
   onAutoPasteToggle: (Boolean) -> Unit,
   onAutoNextToggle: (Boolean) -> Unit,
   onDownloadVoice: () -> Unit,
@@ -432,6 +435,39 @@ fun DialogueEditorCard(
           Icon(Icons.Filled.ContentPaste, contentDescription = null, modifier = Modifier.size(16.dp), tint = StudioCyan)
           Spacer(Modifier.width(6.dp))
           Text("📋 Paste", color = StudioCyan)
+        }
+
+        OutlinedButton(
+          onClick = onSanitizeDialogue,
+          enabled = !isBusy && dialogueText.isNotBlank(),
+          border = BorderStroke(1.dp, StudioAmber.copy(alpha = 0.6f)),
+          modifier = Modifier.heightIn(min = 48.dp).testTag("sanitize_dialogue_button"),
+        ) {
+          Icon(Icons.Filled.CleaningServices, contentDescription = null, modifier = Modifier.size(16.dp), tint = StudioAmber)
+          Spacer(Modifier.width(6.dp))
+          Text("Sanitize", color = StudioAmber)
+        }
+
+        OutlinedButton(
+          onClick = onOpenAutoPilot,
+          enabled = !isBusy,
+          border = BorderStroke(1.dp, StudioCyan.copy(alpha = 0.7f)),
+          modifier = Modifier.heightIn(min = 48.dp).testTag("gemini_autopilot_button"),
+        ) {
+          Icon(Icons.Filled.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp), tint = StudioCyan)
+          Spacer(Modifier.width(6.dp))
+          Text("Auto-Pilot", color = StudioCyan)
+        }
+
+        OutlinedButton(
+          onClick = onRunSelfAudit,
+          enabled = !isBusy && dialogueText.isNotBlank(),
+          border = BorderStroke(1.dp, StudioGreen.copy(alpha = 0.7f)),
+          modifier = Modifier.heightIn(min = 48.dp).testTag("gemini_self_audit_button"),
+        ) {
+          Icon(Icons.Filled.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp), tint = StudioGreen)
+          Spacer(Modifier.width(6.dp))
+          Text("Self-Audit", color = StudioGreen)
         }
 
         Row(
@@ -772,10 +808,24 @@ fun ProgressAndLogCard(
           text = if (progress.isRunning) "${progress.taskTitle} • ${progress.progressPercent}%" else "PROGRESS & SYSTEM LOG",
           style = MaterialTheme.typography.titleSmall,
           color = if (progress.isRunning) StudioAmber else StudioCyan,
+          modifier = Modifier.weight(1f),
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
         )
-        if (progress.etaText.isNotBlank() && progress.isRunning) {
+        if (progress.isRunning && (progress.elapsedText.isNotBlank() || progress.etaText.isNotBlank())) {
+          val timingLabel =
+            buildString {
+              if (progress.elapsedText.isNotBlank()) {
+                append(progress.elapsedText)
+              }
+              if (progress.etaText.isNotBlank()) {
+                if (isNotEmpty()) append(" • ")
+                append("ETA: ")
+                append(progress.etaText)
+              }
+            }
           Text(
-            text = "ETA: ${progress.etaText}",
+            text = timingLabel,
             style = MaterialTheme.typography.labelMedium.copy(fontFamily = JetBrainsMonoFontFamily),
             color = StudioAmber,
           )

@@ -1,10 +1,14 @@
 package com.example
 
+import com.example.data.GeminiScriptClient
 import com.example.data.ScriptEvent
 import com.example.data.VideoRenderPipeline
 import com.example.domain.NaturalSort
 import com.example.domain.ScriptValidator
+import com.example.domain.StrictCleanDialogueSanitizer
 import com.example.domain.TransitionParser
+import java.io.IOException
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -129,4 +133,108 @@ class StudioPipelineDomainTest {
     assertEquals(10, tracker.currentPercent)
     assertEquals(countBefore, emitted.size)
   }
+
+  @Test
+  fun `strict clean dialogue sanitizer strips notes, fences, tags and chatter while preserving valid cues`() {
+    val dirty =
+      """
+      Sure, here is your cleaned horror narration script:
+      ```markdown
+      [CHAPTER TITLE: THE ARCHIVE BASEMENT]
+      The tape hissed in the dark.
+      [SFX: distant heavy footsteps echoing down concrete stairs]
+      Nobody breathed for three seconds.
+      [DEAD SILENCE DROP: 2.5s]
+      Then the lock clicked open.
+      ...
+      ...
+      [OUTRO VIDEO: fade to black]
+      ```
+
+      [PRODUCTION NOTES]
+      - Tone: sinister documentary
+      - Pacing: slow burn
+
+      [SOURCE PACK]
+      - Case File Alpha
+
+      [AUDIO / TECHNICAL NOTES]
+      - Peak at minus three dB
+
+      Let me know if you'd like any adjustments!
+      """.trimIndent()
+
+    assertTrue(StrictCleanDialogueSanitizer.hasContaminatedDirectives(dirty))
+    assertFalse(ScriptValidator.validateScript(dirty).isValid)
+
+    val cleaned = StrictCleanDialogueSanitizer.sanitize(dirty)
+    assertFalse(StrictCleanDialogueSanitizer.hasContaminatedDirectives(cleaned))
+    assertFalse(cleaned.contains("```"))
+    assertFalse(cleaned.contains("PRODUCTION NOTES"))
+    assertFalse(cleaned.contains("SOURCE PACK"))
+    assertFalse(cleaned.contains("TECHNICAL NOTES"))
+    assertFalse(cleaned.contains("CHAPTER TITLE"))
+    assertFalse(cleaned.contains("OUTRO VIDEO"))
+    assertFalse(cleaned.contains("Let me know"))
+    assertTrue(cleaned.contains("[SFX: distant heavy footsteps echoing down concrete stairs]"))
+    assertTrue(cleaned.contains("[DEAD SILENCE DROP: 2.5s]"))
+
+    val qa = ScriptValidator.validateScript(cleaned)
+    assertTrue(qa.isValid)
+    assertEquals(1, qa.sfxCount)
+    assertEquals(1, qa.silenceCount)
+  }
+
+  @Test
+  fun `gemini script client retries transient errors with 5s 15s 30s backoff and repairs digits`() =
+    runTest {
+      val observedDelays = mutableListOf<Long>()
+      var callCount = 0
+
+      val client =
+        GeminiScriptClient(
+          generateRawOverride = { prompt ->
+            callCount++
+            when (callCount) {
+              1 -> throw IOException("HTTP 429 rate limit exceeded")
+              2 -> throw IllegalStateException("HTTP 503 service unavailable")
+              3 -> throw IOException("Temporary network reset")
+              // 4th call completes Self-Audit (still has a stray digit requiring 1 targeted repair)
+              4 ->
+                """
+                ```
+                In 1994 the corridor went cold.
+                [SFX: flickering fluorescent tube]
+                ...
+                ...
+                ```
+                """.trimIndent()
+              // 5th call is targeted Repair Pass 1
+              else -> {
+                assertTrue(prompt.contains("FATAL ERROR"))
+                """
+                In nineteen ninety-four the corridor went cold.
+                [SFX: flickering fluorescent tube]
+                ...
+                ...
+                """.trimIndent()
+              }
+            }
+          },
+          delayFn = { ms -> observedDelays += ms },
+        )
+
+      val outcome =
+        client.runAutoPilotAndAudit(
+          topicOrDraft = "The hallway went dark.",
+          partNumber = 1,
+          generateFromTopic = false,
+        )
+
+      assertEquals(listOf(5_000L, 15_000L, 30_000L), observedDelays)
+      assertEquals(1, outcome.repairPassesUsed)
+      assertTrue(outcome.qaResult.isValid)
+      assertFalse(outcome.qaResult.hasFatalDigits)
+      assertTrue(outcome.cleanScript.contains("nineteen ninety-four"))
+    }
 }

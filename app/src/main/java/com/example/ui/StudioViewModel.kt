@@ -118,6 +118,11 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     controller.emitSnackbar("API settings saved")
   }
 
+  fun sanitizeDialogue() = controller.sanitizeDialogue()
+  fun runGeminiAutoPilot(topicOrOutline: String) =
+    controller.runGeminiAutoPilot(topicOrDraft = topicOrOutline, generateFromTopic = true)
+  fun runGeminiSelfAudit() =
+    controller.runGeminiAutoPilot(topicOrDraft = dialogueText.value, generateFromTopic = false)
   fun startDownloadVoice() = controller.startDownloadVoice()
   fun startFilterPreview() = controller.startFilterPreview()
   fun startSmartRender(ignoreLowStorage: Boolean = false) =

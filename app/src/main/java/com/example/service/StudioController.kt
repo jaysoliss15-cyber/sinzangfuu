@@ -8,6 +8,7 @@ import com.example.data.AssetSlotStatus
 import com.example.data.AudioPipelineProcessor
 import com.example.data.ElevenLabsClient
 import com.example.data.FfmpegExecutor
+import com.example.data.GeminiScriptClient
 import com.example.data.LogEntry
 import com.example.data.LogLevel
 import com.example.data.LowStorageWarning
@@ -25,6 +26,7 @@ import com.example.data.StudioRunStatus
 import com.example.data.SubscriptionInfo
 import com.example.data.VideoRenderPipeline
 import com.example.domain.ScriptValidator
+import com.example.domain.StrictCleanDialogueSanitizer
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -45,11 +47,13 @@ class StudioController(private val appContext: Context) {
   val fileManager = StudioFileManager(appContext)
   val ffmpegExecutor = FfmpegExecutor(appContext)
   val elevenLabsClient = ElevenLabsClient()
+  val geminiScriptClient = GeminiScriptClient()
   private val audioProcessor = AudioPipelineProcessor(fileManager, elevenLabsClient, ffmpegExecutor)
   private val videoPipeline = VideoRenderPipeline(fileManager, ffmpegExecutor)
 
   private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
   private var activeJob: Job? = null
+  private var activeTaskStartMs: Long = 0L
 
   private val _config = MutableStateFlow(configRepo.load())
   val config: StateFlow<StudioConfig> = _config.asStateFlow()
@@ -257,21 +261,93 @@ class StudioController(private val appContext: Context) {
     _logs.value = emptyList()
   }
 
+  fun sanitizeDialogue() {
+    val current = _dialogueText.value
+    if (current.isBlank()) {
+      emitSnackbar("Dialogue editor is empty")
+      return
+    }
+    val cleaned = StrictCleanDialogueSanitizer.sanitize(current)
+    replaceDialogueWithUndo(
+      newText = cleaned,
+      runLogQa = true,
+      snackbarMessage = "Sanitized dialogue (${cleaned.length} chars)",
+    )
+  }
+
+  fun runGeminiAutoPilot(
+    topicOrDraft: String,
+    generateFromTopic: Boolean,
+  ) {
+    if (activeJob?.isActive == true) {
+      emitSnackbar("Another studio task is currently running.")
+      return
+    }
+    val inputText = topicOrDraft.trim()
+    if (inputText.isEmpty()) {
+      emitSnackbar(
+        if (generateFromTopic) "Enter a story topic or outline for Gemini Auto-Pilot."
+        else "Paste or type a script draft before running Self-Audit."
+      )
+      return
+    }
+
+    val targetPart = _config.value.selectedPart
+    val taskTitle =
+      if (generateFromTopic) "Gemini Auto-Pilot (Part $targetPart)"
+      else "Gemini Self-Audit (Part $targetPart)"
+
+    launchForegroundTask(taskTitle) {
+      val outcome =
+        geminiScriptClient.runAutoPilotAndAudit(
+          topicOrDraft = inputText,
+          partNumber = targetPart,
+          generateFromTopic = generateFromTopic,
+          onProgress = { pct, step ->
+            _progress.value =
+              PipelineProgress(
+                isRunning = true,
+                taskTitle = taskTitle,
+                progressPercent = pct,
+                stepText = step,
+                etaText = if (pct >= 3) "Active" else "Calculating...",
+                elapsedText = formatElapsedFromStart(),
+              )
+          },
+          onLog = ::appendLog,
+        )
+      replaceDialogueWithUndo(
+        newText = outcome.cleanScript,
+        runLogQa = true,
+        snackbarMessage =
+          "Part $targetPart script audited (${outcome.qaResult.charCount} chars, ${outcome.repairPassesUsed} repair(s))",
+      )
+    }
+  }
+
   fun startDownloadVoice() {
     if (activeJob?.isActive == true) {
       emitSnackbar("Another studio task is currently running.")
       return
     }
     val rawText = _dialogueText.value
-    val qa = ScriptValidator.validateScript(rawText)
+    val sanitizedText = StrictCleanDialogueSanitizer.sanitize(rawText)
+    val qa = ScriptValidator.validateScript(sanitizedText)
     _qaResult.value = qa
     qa.errors.forEach { appendLog("QA ERROR: $it", LogLevel.ERROR) }
     qa.warnings.forEach { appendLog("QA WARN: $it", LogLevel.WARNING) }
 
-    if (!qa.isValid) {
+    if (!qa.isValid || qa.hasFatalDigits) {
       _runStatus.value = StudioRunStatus.ERROR
       emitSnackbar(qa.errors.firstOrNull() ?: "Script QA failed.")
       return
+    }
+    if (sanitizedText != rawText.trim()) {
+      replaceDialogueWithUndo(
+        newText = sanitizedText,
+        runLogQa = false,
+        snackbarMessage = "Cleaned non-dialogue tags before TTS",
+      )
     }
     val cfg = _config.value
     if (cfg.apiKey.isBlank()) {
@@ -295,6 +371,7 @@ class StudioController(private val appContext: Context) {
               progressPercent = pct,
               stepText = step,
               etaText = eta,
+              elapsedText = formatElapsedFromStart(),
             )
         },
         onLog = ::appendLog,
@@ -334,6 +411,7 @@ class StudioController(private val appContext: Context) {
                 progressPercent = pct,
                 stepText = step,
                 etaText = eta,
+                elapsedText = formatElapsedFromStart(),
               )
           },
           onLog = ::appendLog,
@@ -372,6 +450,7 @@ class StudioController(private val appContext: Context) {
                 progressPercent = pct,
                 stepText = step,
                 etaText = eta,
+                elapsedText = formatElapsedFromStart(),
               )
           },
           onLog = ::appendLog,
@@ -418,6 +497,7 @@ class StudioController(private val appContext: Context) {
     block: suspend () -> Unit,
   ) {
     ffmpegExecutor.resetCancellationFlag()
+    activeTaskStartMs = System.currentTimeMillis()
     _runStatus.value = StudioRunStatus.BUSY
     _progress.value =
       PipelineProgress(
@@ -426,6 +506,7 @@ class StudioController(private val appContext: Context) {
         progressPercent = 1,
         stepText = "Starting $title...",
         etaText = "Calculating...",
+        elapsedText = "0s",
       )
     startRenderService()
 
@@ -468,6 +549,14 @@ class StudioController(private val appContext: Context) {
 
   private fun stopRenderService() {
     runCatching { appContext.stopService(Intent(appContext, StudioRenderService::class.java)) }
+  }
+
+  private fun formatElapsedFromStart(): String {
+    if (activeTaskStartMs <= 0L) return "0s"
+    val totalSec = ((System.currentTimeMillis() - activeTaskStartMs) / 1000L).toInt().coerceAtLeast(0)
+    val mins = totalSec / 60
+    val rem = totalSec % 60
+    return if (mins > 0) "${mins}m ${rem}s" else "${rem}s"
   }
 
   fun checkSubscriptionCredits() {

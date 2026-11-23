@@ -155,6 +155,7 @@ data class PipelineProgress(
   val progressPercent: Int = 0,
   val stepText: String = "",
   val etaText: String = "",
+  val elapsedText: String = "",
 )
 
 data class PreviewPlayerTarget(

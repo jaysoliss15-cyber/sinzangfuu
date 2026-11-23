@@ -143,6 +143,10 @@ class StudioRenderService : Service() {
     val contentLine =
       buildString {
         append(progress.stepText.ifBlank { "Working in background..." })
+        if (progress.elapsedText.isNotBlank()) {
+          append(" • Elapsed: ")
+          append(progress.elapsedText)
+        }
         if (progress.etaText.isNotBlank()) {
           append(" • ETA: ")
           append(progress.etaText)

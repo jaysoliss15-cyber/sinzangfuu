@@ -184,6 +184,10 @@ object ScriptValidator {
       errors +=
         "Malformed or unclosed [SFX: ...] or [DEAD SILENCE DROP: ...] tag detected outside valid cues."
     }
+    if (StrictCleanDialogueSanitizer.hasContaminatedDirectives(rawScript)) {
+      errors +=
+        "Contaminated markdown fences, notes, or non-cue directives detected. Run Sanitize or Gemini Self-Audit first."
+    }
 
     val cleanedTranscript = normalizeTranscript(speechBuilder.toString())
     val charCount = cleanedTranscript.length
