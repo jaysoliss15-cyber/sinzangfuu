@@ -46,10 +46,13 @@ class FfmpegExecutor(private val context: Context) {
   suspend fun runFfmpeg(
     args: List<String>,
     onOutputLine: ((String) -> Unit)? = null,
-  ): CommandExecutionResult = executeBinary(ffmpegBinary, listOf("-y") + args, onOutputLine)
+  ): CommandExecutionResult {
+    val finalArgs = if (args.firstOrNull() == "-y") args else listOf("-y") + args
+    return executeBinary(ffmpegBinary, finalArgs, onOutputLine)
+  }
 
   suspend fun probeDurationSeconds(file: File): Double? {
-    if (!file.exists() || !file.isFile) return null
+    if (!file.exists() || !file.isFile || file.length() == 0L) return null
     val result =
       executeBinary(
         binary = ffprobeBinary,
@@ -69,7 +72,7 @@ class FfmpegExecutor(private val context: Context) {
   }
 
   suspend fun hasAudioStream(file: File): Boolean {
-    if (!file.exists() || !file.isFile) return false
+    if (!file.exists() || !file.isFile || file.length() == 0L) return false
     val result =
       executeBinary(
         binary = ffprobeBinary,
@@ -146,4 +149,32 @@ class FfmpegExecutor(private val context: Context) {
         activeProcess.compareAndSet(process, null)
       }
     }
+
+  companion object {
+    fun formatConcatEntry(file: File): String {
+      val escapedPath = file.absolutePath.replace("'", "'\\''")
+      return "file '$escapedPath'"
+    }
+
+    fun buildConcatManifest(files: List<File>): String {
+      require(files.isNotEmpty()) { "FFmpeg concat manifest requires at least one input file." }
+      files.forEach { file ->
+        require(file.exists() && file.isFile && file.length() > 0L) {
+          "FFmpeg concat input missing or empty: ${file.absolutePath}"
+        }
+      }
+      return files.joinToString(separator = "\n", postfix = "\n") { formatConcatEntry(it) }
+    }
+
+    fun lastStderrLines(output: String, maxLines: Int = 10): String {
+      val tail =
+        output
+          .lineSequence()
+          .map { it.trimEnd() }
+          .filter { it.isNotBlank() }
+          .toList()
+          .takeLast(maxLines.coerceAtLeast(1))
+      return if (tail.isEmpty()) "no stderr output" else tail.joinToString("\n")
+    }
+  }
 }

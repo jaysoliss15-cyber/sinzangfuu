@@ -815,10 +815,10 @@ class StudioController(private val appContext: Context) {
           val msg = e.message ?: "Unknown pipeline error"
           _runStatus.value = StudioRunStatus.ERROR
           _progress.update {
-            it.copy(isRunning = false, stepText = msg, etaText = "")
+            it.copy(isRunning = false, stepText = msg.lineSequence().firstOrNull()?.take(180) ?: msg, etaText = "")
           }
           appendLog("ERROR: $msg", LogLevel.ERROR)
-          emitSnackbar(msg)
+          emitSnackbar(msg.lineSequence().firstOrNull()?.take(160) ?: msg)
         } finally {
           stopRenderService()
           refreshWorkspaceAndMediaHub()

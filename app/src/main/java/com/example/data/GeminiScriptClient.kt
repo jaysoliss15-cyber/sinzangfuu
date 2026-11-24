@@ -34,6 +34,12 @@ data class GeminiScriptAuditOutcome(
   val repairPassesUsed: Int,
 )
 
+data class OpenAiChatParseResult(
+  val content: String,
+  val reasoningContent: String = "",
+  val finishReason: String = "",
+)
+
 class GeminiScriptClient(
   private val godPromptFile: File? = null,
   private val generateRawOverride: (suspend (String) -> String)? = null,
@@ -42,7 +48,7 @@ class GeminiScriptClient(
   private val httpClient: OkHttpClient by lazy {
     OkHttpClient.Builder()
       .connectTimeout(15, TimeUnit.SECONDS)
-      .readTimeout(90, TimeUnit.SECONDS)
+      .readTimeout(180, TimeUnit.SECONDS)
       .writeTimeout(60, TimeUnit.SECONDS)
       .build()
   }
@@ -211,6 +217,7 @@ class GeminiScriptClient(
             apiKey = cleanApiKey,
             modelName = effectiveModel,
             systemInstruction = cleanGodPrompt,
+            onLog = onLog,
           )
         }
       } else {
@@ -230,6 +237,7 @@ class GeminiScriptClient(
           apiKey = cleanApiKey,
           modelName = effectiveModel,
           systemInstruction = cleanGodPrompt,
+          onLog = onLog,
         )
       }
 
@@ -258,6 +266,7 @@ class GeminiScriptClient(
             apiKey = cleanApiKey,
             modelName = effectiveModel,
             systemInstruction = cleanGodPrompt,
+            onLog = onLog,
           )
         }
       sanitized = StrictCleanDialogueSanitizer.sanitize(repaired)
@@ -312,6 +321,7 @@ class GeminiScriptClient(
     apiKey: String,
     modelName: String,
     systemInstruction: String,
+    onLog: (String, LogLevel) -> Unit,
   ): String {
     currentCoroutineContext().ensureActive()
     if (generateRawOverride != null) {
@@ -327,6 +337,7 @@ class GeminiScriptClient(
             apiKey = apiKey,
             modelName = modelName,
             systemInstruction = systemInstruction,
+            onLog = onLog,
           )
         } else {
           invokeFirebaseAiLogic(
@@ -349,6 +360,7 @@ class GeminiScriptClient(
           apiKey = apiKey,
           modelName = modelName,
           systemInstruction = systemInstruction,
+          onLog = onLog,
         )
       }
     }
@@ -374,11 +386,11 @@ class GeminiScriptClient(
       val response = withTimeout(REQUEST_TIMEOUT_MS) { model.generateContent(prompt) }
       val text = response.text?.trim()
       if (text.isNullOrBlank()) {
-        throw IllegalStateException("Gemini returned an empty response.")
+        throw IllegalStateException("Gemini AI Logic returned a blank response.")
       }
       text
     } catch (e: TimeoutCancellationException) {
-      Log.e(TAG, "Gemini AI Logic call timed out after 60s", e)
+      Log.e(TAG, "Gemini AI Logic call timed out after 180s", e)
       throw e
     } catch (e: CancellationException) {
       throw e
@@ -394,6 +406,7 @@ class GeminiScriptClient(
     apiKey: String,
     modelName: String,
     systemInstruction: String,
+    onLog: (String, LogLevel) -> Unit,
   ): String =
     withTimeout(REQUEST_TIMEOUT_MS) {
       withContext(Dispatchers.IO) {
@@ -431,18 +444,23 @@ class GeminiScriptClient(
         httpClient.newCall(request).execute().use { response ->
           val respText = response.body?.string().orEmpty()
           if (!response.isSuccessful) {
-            throw HttpStatusException(
-              code = response.code,
-              message =
-                formatHttpError(
-                  provider = LlmProvider.GEMINI,
-                  code = response.code,
-                  url = requestUrl,
-                  rawBody = respText,
-                ),
-            )
+            val errMsg =
+              formatHttpError(
+                provider = LlmProvider.GEMINI,
+                code = response.code,
+                url = requestUrl,
+                rawBody = respText,
+              )
+            onLog(errMsg, LogLevel.ERROR)
+            throw HttpStatusException(code = response.code, message = errMsg)
           }
-          val root = JSONObject(respText)
+          val root =
+            runCatching { JSONObject(respText) }.getOrElse {
+              val msg =
+                "Gemini REST API HTTP ${response.code} returned invalid JSON. Body: ${respText.take(400).ifBlank { "<empty body>" }}"
+              onLog(msg, LogLevel.ERROR)
+              throw IllegalStateException(msg, it)
+            }
           val candidates = root.optJSONArray("candidates")
           val firstCandidate = candidates?.optJSONObject(0)
           val parts = firstCandidate?.optJSONObject("content")?.optJSONArray("parts")
@@ -455,7 +473,10 @@ class GeminiScriptClient(
               }
             }.trim()
           if (generated.isBlank()) {
-            throw IllegalStateException("Gemini REST API returned an empty candidate response.")
+            val msg =
+              "Gemini REST API HTTP ${response.code} returned blank candidate text. Body: ${respText.take(400).ifBlank { "<empty body>" }}"
+            onLog(msg, LogLevel.ERROR)
+            throw IllegalStateException(msg)
           }
           generated
         }
@@ -469,6 +490,7 @@ class GeminiScriptClient(
     apiKey: String,
     modelName: String,
     systemInstruction: String,
+    onLog: (String, LogLevel) -> Unit,
   ): String {
     if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
       throw IllegalArgumentException(
@@ -524,58 +546,39 @@ class GeminiScriptClient(
         httpClient.newCall(reqBuilder.build()).execute().use { response ->
           val respText = response.body?.string().orEmpty()
           if (!response.isSuccessful) {
-            throw HttpStatusException(
-              code = response.code,
-              message =
-                formatHttpError(
-                  provider = provider,
-                  code = response.code,
-                  url = requestUrl,
-                  rawBody = respText,
-                ),
-            )
+            val errMsg =
+              formatHttpError(
+                provider = provider,
+                code = response.code,
+                url = requestUrl,
+                rawBody = respText,
+              )
+            onLog(errMsg, LogLevel.ERROR)
+            throw HttpStatusException(code = response.code, message = errMsg)
           }
 
-          val content = parseOpenAiChatCompletionContent(respText)
-          if (content.isBlank()) {
-            throw IllegalStateException("${provider.displayName} returned an empty response.")
+          val parsed =
+            runCatching { parseOpenAiChatResponse(respText) }.getOrElse {
+              val errMsg =
+                "${provider.displayName} HTTP ${response.code} returned invalid JSON. Body: ${respText.take(400).ifBlank { "<empty body>" }}"
+              onLog(errMsg, LogLevel.ERROR)
+              throw IllegalStateException(errMsg, it)
+            }
+          if (parsed.content.isBlank()) {
+            val errMsg =
+              formatEmptyOpenAiCompletionError(
+                provider = provider,
+                httpCode = response.code,
+                rawBody = respText,
+                parsed = parsed,
+              )
+            onLog(errMsg, LogLevel.ERROR)
+            throw IllegalStateException(errMsg)
           }
-          content
+          parsed.content
         }
       }
     }
-  }
-
-  private fun formatHttpError(
-    provider: LlmProvider,
-    code: Int,
-    url: String,
-    rawBody: String,
-  ): String {
-    val detail = extractRestError(rawBody)
-    return when (code) {
-      401,
-      403 ->
-        "Authentication failed (HTTP $code) for ${provider.displayName}: verify your API key. ($detail)"
-      404 ->
-        "Endpoint or model not found (HTTP 404) at $url. Verify Base URL and Model ID. ($detail)"
-      429 ->
-        "Rate limit / quota exceeded (HTTP 429) for ${provider.displayName}. ($detail)"
-      else ->
-        "${provider.displayName} HTTP $code: $detail"
-    }
-  }
-
-  private fun extractRestError(rawBody: String): String {
-    if (rawBody.isBlank()) return "Empty response body"
-    return runCatching {
-      val json = JSONObject(rawBody)
-      val errObj = json.optJSONObject("error")
-      val nestedMsg = errObj?.optString("message")?.takeIf { it.isNotBlank() }
-      nestedMsg
-        ?: json.optString("message").takeIf { it.isNotBlank() }
-        ?: rawBody.take(240)
-    }.getOrElse { rawBody.take(240) }
   }
 
   private fun resolveFirebaseAiModel(configuredModel: String): String {
@@ -734,12 +737,69 @@ class GeminiScriptClient(
   companion object {
     private const val TAG = "GeminiScriptClient"
     private const val MAX_REPAIR_PASSES = 2
-    private const val REQUEST_TIMEOUT_MS = 60_000L
+    private const val REQUEST_TIMEOUT_MS = 180_000L
     private const val MODEL_FETCH_TIMEOUT_MS = 30_000L
     private const val FIREBASE_DEFAULT_MODEL = "gemini-3.8-flash"
     private const val OPENROUTER_REFERER = "https://themissingpage.studio"
     private const val OPENROUTER_APP_TITLE = "The Missing Page - S-Tier Studio"
     val RETRY_BACKOFFS_MS = listOf(5_000L, 15_000L, 30_000L)
+
+    fun formatHttpError(
+      provider: LlmProvider,
+      code: Int,
+      url: String,
+      rawBody: String,
+    ): String {
+      val detail = extractRestError(rawBody)
+      return when (code) {
+        401,
+        403 ->
+          "Authentication failed (HTTP $code) for ${provider.displayName}: verify your API key. ($detail)"
+        404 ->
+          "Endpoint or model not found (HTTP 404) at $url. Verify Base URL and Model ID. ($detail)"
+        429 ->
+          "Rate limit / quota exceeded (HTTP 429) for ${provider.displayName}. ($detail)"
+        else ->
+          "${provider.displayName} HTTP $code ($url): $detail"
+      }
+    }
+
+    fun extractRestError(rawBody: String): String {
+      if (rawBody.isBlank()) return "<empty response body>"
+      val truncatedRaw = rawBody.trim().replace("\n", " ").take(400)
+      return runCatching {
+        val json = JSONObject(rawBody)
+        val errObj = json.optJSONObject("error")
+        val nestedMsg = errObj?.optString("message")?.takeIf { it.isNotBlank() }
+        val metaRaw =
+          errObj
+            ?.optJSONObject("metadata")
+            ?.optString("raw")
+            ?.takeIf { it.isNotBlank() }
+            ?.take(200)
+        val topMsg = json.optString("message").takeIf { it.isNotBlank() }
+        when {
+          nestedMsg != null && metaRaw != null -> "$nestedMsg | raw: $metaRaw"
+          nestedMsg != null -> nestedMsg.take(400)
+          topMsg != null -> topMsg.take(400)
+          else -> truncatedRaw
+        }
+      }.getOrElse { truncatedRaw }
+    }
+
+    fun formatEmptyOpenAiCompletionError(
+      provider: LlmProvider,
+      httpCode: Int,
+      rawBody: String,
+      parsed: OpenAiChatParseResult,
+    ): String {
+      val finishInfo = parsed.finishReason.ifBlank { "unknown" }
+      if (parsed.reasoningContent.isNotBlank()) {
+        return "${provider.displayName} HTTP $httpCode returned blank choices[0].message.content while reasoning_content was present (${parsed.reasoningContent.length} chars, finish_reason=$finishInfo). Switch to a non-reasoning model or increase output tokens. Reasoning preview: ${parsed.reasoningContent.take(240)}"
+      }
+      val bodyPreview = rawBody.trim().replace("\n", " ").take(400).ifBlank { "<empty body>" }
+      return "${provider.displayName} HTTP $httpCode returned blank choices[0].message.content (finish_reason=$finishInfo). Body: $bodyPreview"
+    }
 
     fun normalizeBaseUrl(provider: LlmProvider, rawBaseUrl: String): String {
       val candidate = rawBaseUrl.trim().ifBlank { provider.defaultBaseUrl }.trimEnd('/')
@@ -796,28 +856,43 @@ class GeminiScriptClient(
       return result.sorted()
     }
 
-    fun parseOpenAiChatCompletionContent(jsonBody: String): String {
+    fun parseOpenAiChatResponse(jsonBody: String): OpenAiChatParseResult {
       val root = JSONObject(jsonBody)
-      val choices = root.optJSONArray("choices") ?: return ""
-      val firstChoice = choices.optJSONObject(0) ?: return ""
-      val message = firstChoice.optJSONObject("message") ?: return ""
+      val choices = root.optJSONArray("choices") ?: return OpenAiChatParseResult("")
+      val firstChoice = choices.optJSONObject(0) ?: return OpenAiChatParseResult("")
+      val finishReason = firstChoice.optString("finish_reason", "").trim()
+      val message = firstChoice.optJSONObject("message")
+        ?: return OpenAiChatParseResult(content = "", finishReason = finishReason)
       val rawContent: Any? = message.opt("content")
-      return if (rawContent is String) {
-        rawContent.trim()
-      } else if (rawContent is JSONArray) {
-        buildString {
-          for (i in 0 until rawContent.length()) {
-            val partObj = rawContent.optJSONObject(i)
-            if (partObj != null) {
-              append(partObj.optString("text", ""))
-            } else {
-              append(rawContent.optString(i, ""))
+      val content =
+        if (rawContent is String) {
+          rawContent.trim()
+        } else if (rawContent is JSONArray) {
+          buildString {
+            for (i in 0 until rawContent.length()) {
+              val partObj = rawContent.optJSONObject(i)
+              if (partObj != null) {
+                append(partObj.optString("text", ""))
+              } else {
+                append(rawContent.optString(i, ""))
+              }
             }
-          }
-        }.trim()
-      } else {
-        ""
-      }
+          }.trim()
+        } else {
+          ""
+        }
+      val reasoning =
+        message.optString("reasoning_content", "").trim().ifBlank {
+          message.optString("reasoning", "").trim()
+        }
+      return OpenAiChatParseResult(
+        content = content,
+        reasoningContent = reasoning,
+        finishReason = finishReason,
+      )
     }
+
+    fun parseOpenAiChatCompletionContent(jsonBody: String): String =
+      parseOpenAiChatResponse(jsonBody).content
   }
 }

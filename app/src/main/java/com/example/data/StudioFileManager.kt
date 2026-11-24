@@ -266,10 +266,17 @@ class StudioFileManager(private val context: Context) {
     return count
   }
 
-  fun clearPartAudioFiles(partNum: Int) {
+  fun clearPartAudioFiles(
+    partNum: Int,
+    excludeFile: File? = null,
+  ) {
     val partDir = getPartDir(partNum)
     if (!partDir.exists()) return
+    val excludeCanonical = excludeFile?.absolutePath
     partDir.listFiles()?.forEach { file ->
+      if (excludeCanonical != null && file.absolutePath == excludeCanonical) {
+        return@forEach
+      }
       if (
         file.isFile && file.extension.lowercase(Locale.ROOT) in setOf("wav", "mp3")
       ) {

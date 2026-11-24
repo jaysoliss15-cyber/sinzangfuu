@@ -12,6 +12,15 @@ import kotlinx.coroutines.ensureActive
 class VideoRenderPipeline(
   private val fileManager: StudioFileManager,
   private val ffmpegExecutor: FfmpegExecutor,
+  private val ffmpegRunner: suspend (List<String>, ((String) -> Unit)?) -> CommandExecutionResult = { args, onLine ->
+    ffmpegExecutor.runFfmpeg(args, onLine)
+  },
+  private val durationProber: suspend (File) -> Double? = { file ->
+    ffmpegExecutor.probeDurationSeconds(file)
+  },
+  private val audioStreamProber: suspend (File) -> Boolean = { file ->
+    ffmpegExecutor.hasAudioStream(file)
+  },
 ) {
   internal class MonotonicProgressTracker(
     private val startTimeMs: Long,
@@ -85,6 +94,10 @@ class VideoRenderPipeline(
           "No video available for preview. Add a Stock MP4 in Media Hub or pick a Part MP4."
         )
 
+    require(sourceVideo.exists() && sourceVideo.isFile && sourceVideo.length() > 0L) {
+      "Preview source video is missing or empty: ${sourceVideo.absolutePath}"
+    }
+
     val tracker = MonotonicProgressTracker(System.currentTimeMillis(), onProgress = onProgress)
     tracker.report(5.0, "Rendering 3s ${filterMode.displayName} preview...", force = true)
     onLog("Generating 3s filter preview (${filterMode.displayName}) from ${sourceVideo.name}...", LogLevel.INFO)
@@ -98,7 +111,7 @@ class VideoRenderPipeline(
           filterMode.ffmpegFilter
 
       val res =
-        ffmpegExecutor.runFfmpeg(
+        ffmpegRunner(
           listOf(
             "-t",
             "3",
@@ -117,6 +130,8 @@ class VideoRenderPipeline(
             "-r",
             "24",
             "-an",
+            "-f",
+            "mp4",
             previewTmp.absolutePath,
           )
         ) { line ->
@@ -130,7 +145,7 @@ class VideoRenderPipeline(
           }
         }
       if (res.exitCode != 0 || !previewTmp.exists() || previewTmp.length() == 0L) {
-        throw IllegalStateException("3s preview render failed: ${res.output.takeLast(300)}")
+        failFfmpegStage("3s Preview (${filterMode.displayName})", res, previewTmp, onLog)
       }
       atomicReplace(previewTmp, previewOut)
       tracker.report(100.0, "3s filter preview ready.", force = true)
@@ -232,7 +247,7 @@ class VideoRenderPipeline(
             force = true,
           )
         } else {
-          val sourceDur = ffmpegExecutor.probeDurationSeconds(sourceVideo) ?: 20.0
+          val sourceDur = durationProber(sourceVideo) ?: 20.0
           val cappedDur = sourceDur.coerceAtMost(20.0).coerceAtLeast(0.5)
 
           if (!boomCached) {
@@ -252,7 +267,7 @@ class VideoRenderPipeline(
             activeTempFile = preScaledTmp
 
             val preScaleRes =
-              ffmpegExecutor.runFfmpeg(
+              ffmpegRunner(
                 listOf(
                   "-t",
                   "20",
@@ -271,6 +286,8 @@ class VideoRenderPipeline(
                   "-r",
                   "24",
                   "-an",
+                  "-f",
+                  "mp4",
                   preScaledTmp.absolutePath,
                 )
               ) { line ->
@@ -284,9 +301,7 @@ class VideoRenderPipeline(
                 }
               }
             if (preScaleRes.exitCode != 0 || !preScaledTmp.exists() || preScaledTmp.length() == 0L) {
-              throw IllegalStateException(
-                "Pre-scale failed for ${sourceVideo.name}: ${preScaleRes.output.takeLast(300)}"
-              )
+              failFfmpegStage("Pre-scale (${sourceVideo.name})", preScaleRes, preScaledTmp, onLog)
             }
 
             tracker.report(
@@ -297,7 +312,7 @@ class VideoRenderPipeline(
             activeTempFile = boomerangTmp
             val expectedBoomDur = (cappedDur * 2.0).coerceAtLeast(1.0)
             val boomRes =
-              ffmpegExecutor.runFfmpeg(
+              ffmpegRunner(
                 listOf(
                   "-i",
                   preScaledTmp.absolutePath,
@@ -327,6 +342,8 @@ class VideoRenderPipeline(
                   "24",
                   "-video_track_timescale",
                   "90000",
+                  "-f",
+                  "mp4",
                   boomerangTmp.absolutePath,
                 )
               ) { line ->
@@ -341,9 +358,7 @@ class VideoRenderPipeline(
               }
             preScaledTmp.delete()
             if (boomRes.exitCode != 0 || !boomerangTmp.exists() || boomerangTmp.length() == 0L) {
-              throw IllegalStateException(
-                "Boomerang generation failed for ${sourceVideo.name}: ${boomRes.output.takeLast(300)}"
-              )
+              failFfmpegStage("Boomerang (${sourceVideo.name})", boomRes, boomerangTmp, onLog)
             }
             atomicReplace(boomerangTmp, boomerangFile)
             activeTempFile = null
@@ -360,10 +375,10 @@ class VideoRenderPipeline(
             val gradedTmp = File(workspaceDir, ".tmp_graded_${videoStem}_${config.filterMode.slug}.mp4")
             activeTempFile = gradedTmp
             val boomDur =
-              (ffmpegExecutor.probeDurationSeconds(boomerangFile) ?: (cappedDur * 2.0)).coerceAtLeast(0.5)
+              (durationProber(boomerangFile) ?: (cappedDur * 2.0)).coerceAtLeast(0.5)
 
             val gradeRes =
-              ffmpegExecutor.runFfmpeg(
+              ffmpegRunner(
                 listOf(
                   "-i",
                   boomerangFile.absolutePath,
@@ -392,6 +407,8 @@ class VideoRenderPipeline(
                   "-video_track_timescale",
                   "90000",
                   "-an",
+                  "-f",
+                  "mp4",
                   gradedTmp.absolutePath,
                 )
               ) { line ->
@@ -405,9 +422,7 @@ class VideoRenderPipeline(
                 }
               }
             if (gradeRes.exitCode != 0 || !gradedTmp.exists() || gradedTmp.length() == 0L) {
-              throw IllegalStateException(
-                "Pre-grading failed for ${boomerangFile.name}: ${gradeRes.output.takeLast(300)}"
-              )
+              failFfmpegStage("Pre-grade (${boomerangFile.name})", gradeRes, gradedTmp, onLog)
             }
             atomicReplace(gradedTmp, gradedFile)
             activeTempFile = null
@@ -439,14 +454,14 @@ class VideoRenderPipeline(
         val tmpVoiceRaw = File(workspaceDir, ".tmp_${spec.partKey}_voice_raw.wav")
         activeTempFile = tmpVoiceRaw
 
-        val rawAudioDur = (ffmpegExecutor.probeDurationSeconds(spec.audioFile) ?: 1.0).coerceAtLeast(0.5)
+        val rawAudioDur = (durationProber(spec.audioFile) ?: 1.0).coerceAtLeast(0.5)
         val isMixAudio = spec.audioFile.nameWithoutExtension.lowercase(Locale.ROOT).endsWith("_mix")
         val audioFilter =
           if (isMixAudio) "volume=1.5,alimiter=limit=0.98"
           else "volume=1.5,dynaudnorm=p=0.95,alimiter=limit=0.95"
 
         val audioRes =
-          ffmpegExecutor.runFfmpeg(
+          ffmpegRunner(
             listOf(
               "-i",
               spec.audioFile.absolutePath,
@@ -458,6 +473,8 @@ class VideoRenderPipeline(
               "2",
               "-c:a",
               "pcm_s16le",
+              "-f",
+              "wav",
               tmpVoiceRaw.absolutePath,
             )
           ) { line ->
@@ -471,15 +488,13 @@ class VideoRenderPipeline(
             }
           }
         if (audioRes.exitCode != 0 || !tmpVoiceRaw.exists() || tmpVoiceRaw.length() == 0L) {
-          throw IllegalStateException(
-            "Broadcast audio normalization failed on Part ${spec.partNumber}: ${audioRes.output.takeLast(300)}"
-          )
+          failFfmpegStage("Part ${spec.partNumber} Broadcast Audio", audioRes, tmpVoiceRaw, onLog)
         }
         atomicReplace(tmpVoiceRaw, voiceRawWav)
         activeTempFile = null
 
         val audioDuration =
-          ffmpegExecutor.probeDurationSeconds(voiceRawWav)
+          durationProber(voiceRawWav)
             ?: throw IllegalStateException("Could not probe audio duration for Part ${spec.partNumber}.")
         partAudioDurations += audioDuration
 
@@ -537,6 +552,8 @@ class VideoRenderPipeline(
                 "-ar",
                 "44100",
                 "-shortest",
+                "-f",
+                "mp4",
                 partTmp.absolutePath,
               )
             } else {
@@ -591,21 +608,21 @@ class VideoRenderPipeline(
                 "-ar",
                 "44100",
                 "-shortest",
+                "-f",
+                "mp4",
                 partTmp.absolutePath,
               )
             }
 
           val safePartDur = audioDuration.coerceAtLeast(0.5)
           val partRes =
-            ffmpegExecutor.runFfmpeg(partArgs) { line ->
+            ffmpegRunner(partArgs) { line ->
               parseFfmpegTimeSeconds(line)?.let { sec ->
                 tracker.reportStageProgress(audioEnd, partEnd, sec / safePartDur, stepLabel)
               }
             }
           if (partRes.exitCode != 0 || !partTmp.exists() || partTmp.length() == 0L) {
-            throw IllegalStateException(
-              "Part ${spec.partNumber} render failed: ${partRes.output.takeLast(300)}"
-            )
+            failFfmpegStage("Part ${spec.partNumber} Render", partRes, partTmp, onLog)
           }
           atomicReplace(partTmp, renderedPartFile)
           sigFile.writeText(signature, Charsets.UTF_8)
@@ -639,8 +656,8 @@ class VideoRenderPipeline(
         val tmpStdTransition = File(workspaceDir, ".tmp_BAGONG_PAHiNA_6S_standard.mp4")
         activeTempFile = tmpStdTransition
 
-        transDur = ffmpegExecutor.probeDurationSeconds(rawTransition) ?: 6.0
-        val hasAudio = ffmpegExecutor.hasAudioStream(rawTransition)
+        transDur = durationProber(rawTransition) ?: 6.0
+        val hasAudio = audioStreamProber(rawTransition)
         val durStr = formatDuration(transDur)
         val scaleVf =
           "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=24,format=yuv420p"
@@ -689,6 +706,8 @@ class VideoRenderPipeline(
               "-ar",
               "44100",
               "-shortest",
+              "-f",
+              "mp4",
               tmpStdTransition.absolutePath,
             )
           } else {
@@ -738,13 +757,15 @@ class VideoRenderPipeline(
               "-ar",
               "44100",
               "-shortest",
+              "-f",
+              "mp4",
               tmpStdTransition.absolutePath,
             )
           }
 
         val safeTransDur = transDur.coerceAtLeast(0.5)
         val transRes =
-          ffmpegExecutor.runFfmpeg(transArgs) { line ->
+          ffmpegRunner(transArgs) { line ->
             parseFfmpegTimeSeconds(line)?.let { sec ->
               tracker.reportStageProgress(
                 slotStart,
@@ -755,7 +776,7 @@ class VideoRenderPipeline(
             }
           }
         if (transRes.exitCode != 0 || !tmpStdTransition.exists() || tmpStdTransition.length() == 0L) {
-          throw IllegalStateException("Transition standardization failed: ${transRes.output.takeLast(300)}")
+          failFfmpegStage("Transition Standardization", transRes, tmpStdTransition, onLog)
         }
         atomicReplace(tmpStdTransition, targetStdTransition)
         activeTempFile = null
@@ -773,8 +794,8 @@ class VideoRenderPipeline(
         val tmpOutro = File(workspaceDir, ".tmp_outro_standard.mp4")
         activeTempFile = tmpOutro
 
-        outroDuration = ffmpegExecutor.probeDurationSeconds(rawOutro) ?: 5.0
-        val hasAudio = ffmpegExecutor.hasAudioStream(rawOutro)
+        outroDuration = durationProber(rawOutro) ?: 5.0
+        val hasAudio = audioStreamProber(rawOutro)
         val scaleVf =
           "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=24,format=yuv420p"
 
@@ -820,6 +841,8 @@ class VideoRenderPipeline(
               "-ar",
               "44100",
               "-shortest",
+              "-f",
+              "mp4",
               tmpOutro.absolutePath,
             )
           } else {
@@ -869,13 +892,15 @@ class VideoRenderPipeline(
               "-ar",
               "44100",
               "-shortest",
+              "-f",
+              "mp4",
               tmpOutro.absolutePath,
             )
           }
 
         val safeOutroDur = outroDuration.coerceAtLeast(0.5)
         val outroRes =
-          ffmpegExecutor.runFfmpeg(outroArgs) { line ->
+          ffmpegRunner(outroArgs) { line ->
             parseFfmpegTimeSeconds(line)?.let { sec ->
               tracker.reportStageProgress(
                 slotStart,
@@ -886,12 +911,12 @@ class VideoRenderPipeline(
             }
           }
         if (outroRes.exitCode != 0 || !tmpOutro.exists() || tmpOutro.length() == 0L) {
-          throw IllegalStateException("Outro standardization failed: ${outroRes.output.takeLast(300)}")
+          failFfmpegStage("Outro Standardization", outroRes, tmpOutro, onLog)
         }
         atomicReplace(tmpOutro, targetOutro)
         activeTempFile = null
         stdOutroFile = targetOutro
-        outroDuration = ffmpegExecutor.probeDurationSeconds(targetOutro) ?: outroDuration
+        outroDuration = durationProber(targetOutro) ?: outroDuration
         onLog("Standardized outro card (${formatSeconds(outroDuration)}).", LogLevel.INFO)
       }
       tracker.report(82.0, "Transitions & outro standardized.", force = true)
@@ -919,7 +944,7 @@ class VideoRenderPipeline(
 
       val masterListFile = File(workspaceDir, "master_video_list.txt")
       masterListFile.writeText(
-        concatEntries.joinToString("\n") { "file '${it.absolutePath.replace("'", "'\\''")}'" } + "\n",
+        FfmpegExecutor.buildConcatManifest(concatEntries),
         Charsets.UTF_8,
       )
 
@@ -931,7 +956,7 @@ class VideoRenderPipeline(
         (partAudioDurations.sum() + (insertedTransitions * transDur) + outroDuration).coerceAtLeast(1.0)
 
       val concatRes =
-        ffmpegExecutor.runFfmpeg(
+        ffmpegRunner(
           listOf(
             "-f",
             "concat",
@@ -941,6 +966,8 @@ class VideoRenderPipeline(
             masterListFile.absolutePath,
             "-c",
             "copy",
+            "-f",
+            "mp4",
             tmpMasterNoBgm.absolutePath,
           )
         ) { line ->
@@ -954,14 +981,14 @@ class VideoRenderPipeline(
           }
         }
       if (concatRes.exitCode != 0 || !tmpMasterNoBgm.exists() || tmpMasterNoBgm.length() == 0L) {
-        throw IllegalStateException("Master concat failed: ${concatRes.output.takeLast(300)}")
+        failFfmpegStage("Master Video Concat", concatRes, tmpMasterNoBgm, onLog)
       }
       atomicReplace(tmpMasterNoBgm, masterNoBgm)
       activeTempFile = null
       tracker.report(88.0, "Master concat complete.", force = true)
 
       val masterDuration =
-        ffmpegExecutor.probeDurationSeconds(masterNoBgm)
+        durationProber(masterNoBgm)
           ?: throw IllegalStateException("Failed to probe MASTER_NO_BGM.mp4 duration.")
 
       // =========================================================================
@@ -1008,6 +1035,12 @@ class VideoRenderPipeline(
             "aac",
             "-b:a",
             "320k",
+            "-ac",
+            "2",
+            "-ar",
+            "44100",
+            "-f",
+            "mp4",
             tmpFinalOutput.absolutePath,
           )
         } else {
@@ -1020,13 +1053,15 @@ class VideoRenderPipeline(
             "+bitexact",
             "-c",
             "copy",
+            "-f",
+            "mp4",
             tmpFinalOutput.absolutePath,
           )
         }
 
       val safeMasterDur = masterDuration.coerceAtLeast(1.0)
       val finalRes =
-        ffmpegExecutor.runFfmpeg(finalArgs) { line ->
+        ffmpegRunner(finalArgs) { line ->
           parseFfmpegTimeSeconds(line)?.let { sec ->
             tracker.reportStageProgress(
               88.0,
@@ -1037,7 +1072,7 @@ class VideoRenderPipeline(
           }
         }
       if (finalRes.exitCode != 0 || !tmpFinalOutput.exists() || tmpFinalOutput.length() == 0L) {
-        throw IllegalStateException("Final BGM mix / metadata wipe failed: ${finalRes.output.takeLast(300)}")
+        failFfmpegStage("Final BGM Mix & Metadata Wipe", finalRes, tmpFinalOutput, onLog)
       }
       atomicReplace(tmpFinalOutput, finalOutput)
       activeTempFile = null
@@ -1083,11 +1118,29 @@ class VideoRenderPipeline(
     String.format(Locale.US, "%.3f", seconds.coerceAtLeast(0.0))
 
   private fun atomicReplace(tmpFile: File, targetFile: File) {
+    require(tmpFile.exists() && tmpFile.isFile && tmpFile.length() > 0L) {
+      "Cannot replace ${targetFile.name}: temp media file is missing or empty (${tmpFile.absolutePath})."
+    }
+    targetFile.parentFile?.mkdirs()
     if (targetFile.exists()) targetFile.delete()
     if (!tmpFile.renameTo(targetFile)) {
       tmpFile.copyTo(targetFile, overwrite = true)
       tmpFile.delete()
     }
+  }
+
+  private fun failFfmpegStage(
+    stageLabel: String,
+    result: CommandExecutionResult,
+    outputFile: File,
+    onLog: (String, LogLevel) -> Unit,
+  ): Nothing {
+    val tail = FfmpegExecutor.lastStderrLines(result.output, 10)
+    onLog(
+      "FFmpeg failed at [$stageLabel] (exit ${result.exitCode}, outExists=${outputFile.exists()}, outBytes=${outputFile.length()}):\n$tail",
+      LogLevel.ERROR,
+    )
+    throw IllegalStateException("$stageLabel failed (exit ${result.exitCode}): ${tail.takeLast(300)}")
   }
 
   private fun formatSeconds(sec: Double): String = formatSecondsStatic(sec)

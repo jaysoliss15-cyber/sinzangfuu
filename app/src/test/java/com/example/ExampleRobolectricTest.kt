@@ -6,6 +6,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.example.data.StudioFileManager
 import com.example.service.StudioController
 import java.io.File
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -187,5 +188,266 @@ class ExampleRobolectricTest {
       "The corridor lights flickered twice.\n...\n...",
       com.example.data.GeminiScriptClient.parseOpenAiChatCompletionContent(completionJson),
     )
+  }
+
+  @Test
+  fun `audio pipeline asetrate fallback writes tmp wav cleanly and survives stale audio cleanup`() =
+    runTest {
+      val context = ApplicationProvider.getApplicationContext<Context>()
+      val fileManager = StudioFileManager(context)
+      fileManager.ensurePartFolders(1)
+      val partDir = fileManager.getPartDir(1)
+      val staleMix = File(partDir, "1_mix.wav").apply { writeBytes(byteArrayOf(1, 2, 3)) }
+
+      val invokedFilters = mutableListOf<String>()
+      val capturedArgs = mutableListOf<List<String>>()
+      val logs = mutableListOf<Pair<String, com.example.data.LogLevel>>()
+
+      val processor =
+        com.example.data.AudioPipelineProcessor(
+          fileManager = fileManager,
+          elevenLabsClient = com.example.data.ElevenLabsClient(),
+          ffmpegExecutor = com.example.data.FfmpegExecutor(context),
+          ffmpegRunner = { args ->
+            capturedArgs += args
+            val afIndex = args.indexOf("-af")
+            val filter = if (afIndex >= 0) args[afIndex + 1] else ""
+            invokedFilters += filter
+            val outFile = File(args.last())
+            if (filter.contains("rubberband")) {
+              com.example.data.CommandExecutionResult(
+                exitCode = 1,
+                output = "No such filter: 'rubberband'",
+              )
+            } else {
+              assertTrue(filter.contains("aresample=44100,asetrate=44100*0.9438,aresample=44100,atempo="))
+              assertTrue(args.firstOrNull() == "-y")
+              assertTrue(args.contains("-f") && args.contains("wav"))
+              outFile.parentFile?.mkdirs()
+              outFile.writeBytes(ByteArray(64) { 42 })
+              com.example.data.CommandExecutionResult(exitCode = 0, output = "ok")
+            }
+          },
+          durationProber = { f -> if (f.exists() && f.length() > 0L) 4.2 else null },
+          ttsSynthesizer = { _, _, _, _, outFile ->
+            outFile.parentFile?.mkdirs()
+            outFile.writeBytes(ByteArray(32) { 7 })
+          },
+        )
+
+      val qa =
+        com.example.domain.ScriptValidator.validateScript(
+          "The archive door remained locked.\n...\n..."
+        )
+      processor.processPartVoice(
+        partNumber = 1,
+        qaResult = qa,
+        config = com.example.data.StudioConfig(apiKey = "el_test_key"),
+        onProgress = { _, _, _ -> },
+        onLog = { msg, lvl -> logs += msg to lvl },
+      )
+
+      val finalWav = File(partDir, "1.wav")
+      assertTrue(finalWav.exists() && finalWav.length() == 64L)
+      assertFalse(File(partDir, ".tmp_1.wav").exists())
+      assertFalse(staleMix.exists())
+      assertEquals(2, invokedFilters.size)
+      assertTrue(logs.any { it.first.contains("asetrate+atempo camouflage fallback") })
+    }
+
+  @Test
+  fun `audio pipeline falls back to unpitched normalized wav when asetrate fails`() =
+    runTest {
+      val context = ApplicationProvider.getApplicationContext<Context>()
+      val fileManager = StudioFileManager(context)
+      fileManager.ensurePartFolders(1)
+      val partDir = fileManager.getPartDir(1)
+
+      val invokedFilters = mutableListOf<String>()
+      val logs = mutableListOf<Pair<String, com.example.data.LogLevel>>()
+
+      val processor =
+        com.example.data.AudioPipelineProcessor(
+          fileManager = fileManager,
+          elevenLabsClient = com.example.data.ElevenLabsClient(),
+          ffmpegExecutor = com.example.data.FfmpegExecutor(context),
+          ffmpegRunner = { args ->
+            val afIndex = args.indexOf("-af")
+            val filter = if (afIndex >= 0) args[afIndex + 1] else ""
+            invokedFilters += filter
+            val outFile = File(args.last())
+            when {
+              filter.contains("rubberband") ->
+                com.example.data.CommandExecutionResult(1, "No such filter: 'rubberband'")
+              filter.contains("asetrate") ->
+                com.example.data.CommandExecutionResult(1, "Error initializing filter 'asetrate': invalid rate")
+              else -> {
+                outFile.parentFile?.mkdirs()
+                outFile.writeBytes(ByteArray(48) { 9 })
+                com.example.data.CommandExecutionResult(0, "ok")
+              }
+            }
+          },
+          durationProber = { f -> if (f.exists() && f.length() > 0L) 3.5 else null },
+          ttsSynthesizer = { _, _, _, _, outFile ->
+            outFile.parentFile?.mkdirs()
+            outFile.writeBytes(ByteArray(32) { 7 })
+          },
+        )
+
+      val qa =
+        com.example.domain.ScriptValidator.validateScript(
+          "The tape hissed softly.\n...\n..."
+        )
+      processor.processPartVoice(
+        partNumber = 1,
+        qaResult = qa,
+        config = com.example.data.StudioConfig(apiKey = "el_test_key"),
+        onProgress = { _, _, _ -> },
+        onLog = { msg, lvl -> logs += msg to lvl },
+      )
+
+      val finalWav = File(partDir, "1.wav")
+      assertTrue(finalWav.exists() && finalWav.length() == 48L)
+      assertEquals(3, invokedFilters.size)
+      assertEquals(com.example.data.AudioPipelineProcessor.UNPITCHED_NORMALIZED_FILTER, invokedFilters.last())
+      assertTrue(
+        logs.any {
+          it.second == com.example.data.LogLevel.ERROR &&
+            it.first.contains("Error initializing filter 'asetrate': invalid rate") &&
+            it.first.contains("un-pitched normalized audio")
+        }
+      )
+    }
+
+  @Test
+  fun `ffmpeg concat manifest escapes spaces and single quotes and extracts last 10 stderr lines`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val spacedDir = File(context.cacheDir, "part 1").apply { mkdirs() }
+    val quotedFile = File(spacedDir, "joe's night clip.mp4").apply { writeBytes(byteArrayOf(1, 2, 3, 4)) }
+    val emptyFile = File(spacedDir, "empty clip.mp4").apply { writeBytes(byteArrayOf()) }
+
+    val manifest = com.example.data.FfmpegExecutor.buildConcatManifest(listOf(quotedFile))
+    assertEquals("file '${spacedDir.absolutePath}/joe'\\''s night clip.mp4'\n", manifest)
+
+    val missingFailure =
+      runCatching {
+        com.example.data.FfmpegExecutor.buildConcatManifest(listOf(quotedFile, emptyFile))
+      }.exceptionOrNull()
+    assertTrue(missingFailure is IllegalArgumentException)
+
+    val twelveLines = (1..12).joinToString("\n") { "stderr line $it" } + "\n\n"
+    val tail = com.example.data.FfmpegExecutor.lastStderrLines(twelveLines, maxLines = 10)
+    val lines = tail.lines()
+    assertEquals(10, lines.size)
+    assertEquals("stderr line 3", lines.first())
+    assertEquals("stderr line 12", lines.last())
+
+    spacedDir.deleteRecursively()
+  }
+
+  @Test
+  fun `video render pipeline logs last 10 ffmpeg stderr lines on failure`() =
+    runTest {
+      val context = ApplicationProvider.getApplicationContext<Context>()
+      val fileManager = StudioFileManager(context)
+      fileManager.ensurePartFolders(1)
+      fileManager.stockLoopsDir.mkdirs()
+      val stockFile = File(fileManager.stockLoopsDir, "archive corridor.mp4").apply {
+        writeBytes(ByteArray(128) { 1 })
+      }
+      val partDir = fileManager.getPartDir(1)
+      File(partDir, "1.wav").writeBytes(ByteArray(128) { 2 })
+
+      val stderrLines = (1..14).joinToString("\n") { "ffmpeg error line $it" }
+      val logs = mutableListOf<Pair<String, com.example.data.LogLevel>>()
+
+      val pipeline =
+        com.example.data.VideoRenderPipeline(
+          fileManager = fileManager,
+          ffmpegExecutor = com.example.data.FfmpegExecutor(context),
+          ffmpegRunner = { _, _ ->
+            com.example.data.CommandExecutionResult(exitCode = 1, output = stderrLines)
+          },
+          durationProber = { 10.0 },
+          audioStreamProber = { true },
+        )
+
+      val error =
+        runCatching {
+          pipeline.renderFilterPreview(
+            partNumber = 1,
+            filterMode = com.example.data.RenderFilterMode.STANDARD_HORROR,
+            onProgress = { _, _, _ -> },
+            onLog = { msg, lvl -> logs += msg to lvl },
+          )
+        }.exceptionOrNull()
+
+      assertTrue(error is IllegalStateException)
+      val errorLog = logs.firstOrNull { it.second == com.example.data.LogLevel.ERROR }?.first.orEmpty()
+      assertTrue(errorLog.contains("FFmpeg failed at [3s Preview (Standard Horror)]"))
+      assertTrue(errorLog.contains("ffmpeg error line 5"))
+      assertTrue(errorLog.contains("ffmpeg error line 14"))
+      assertFalse(errorLog.contains("ffmpeg error line 4\n"))
+
+      stockFile.delete()
+    }
+
+  @Test
+  fun `custom api error formatting preserves http code truncated body and reasoning_content`() {
+    val longRawBody = "upstream gateway error: " + "X".repeat(500)
+    val httpErr =
+      com.example.data.GeminiScriptClient.formatHttpError(
+        provider = com.example.data.LlmProvider.CUSTOM,
+        code = 502,
+        url = "https://custom.llm.local/v1/chat/completions",
+        rawBody = longRawBody,
+      )
+    assertTrue(httpErr.contains("HTTP 502"))
+    assertTrue(httpErr.contains("upstream gateway error:"))
+    assertTrue(httpErr.length < 520)
+
+    val reasoningOnlyJson =
+      """
+      {
+        "choices": [
+          {
+            "finish_reason": "length",
+            "message": {
+              "role": "assistant",
+              "content": "",
+              "reasoning_content": "Thinking step by step about the horror script structure before writing..."
+            }
+          }
+        ]
+      }
+      """.trimIndent()
+    val parsed = com.example.data.GeminiScriptClient.parseOpenAiChatResponse(reasoningOnlyJson)
+    assertEquals("", parsed.content)
+    assertTrue(parsed.reasoningContent.startsWith("Thinking step by step"))
+    val reasoningError =
+      com.example.data.GeminiScriptClient.formatEmptyOpenAiCompletionError(
+        provider = com.example.data.LlmProvider.DEEPSEEK,
+        httpCode = 200,
+        rawBody = reasoningOnlyJson,
+        parsed = parsed,
+      )
+    assertTrue(reasoningError.contains("HTTP 200"))
+    assertTrue(reasoningError.contains("reasoning_content"))
+    assertTrue(reasoningError.contains("finish_reason=length"))
+    assertTrue(reasoningError.contains("Thinking step by step"))
+
+    val malformedBodyJson = """{"choices":[{"finish_reason":"stop","message":{"role":"assistant"}}]}"""
+    val blankParsed = com.example.data.GeminiScriptClient.parseOpenAiChatResponse(malformedBodyJson)
+    val blankError =
+      com.example.data.GeminiScriptClient.formatEmptyOpenAiCompletionError(
+        provider = com.example.data.LlmProvider.CUSTOM,
+        httpCode = 200,
+        rawBody = malformedBodyJson,
+        parsed = blankParsed,
+      )
+    assertTrue(blankError.contains("HTTP 200"))
+    assertTrue(blankError.contains("Body:"))
+    assertTrue(blankError.contains("finish_reason=stop"))
   }
 }
