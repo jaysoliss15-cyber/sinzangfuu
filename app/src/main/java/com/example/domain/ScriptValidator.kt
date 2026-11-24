@@ -186,7 +186,7 @@ object ScriptValidator {
     }
     if (StrictCleanDialogueSanitizer.hasContaminatedDirectives(rawScript)) {
       errors +=
-        "Contaminated markdown fences, notes, or non-cue directives detected. Run Sanitize or Gemini Self-Audit first."
+        "Contaminated markdown fences, notes, or non-cue directives detected. Tap Sanitize first."
     }
 
     val cleanedTranscript = normalizeTranscript(speechBuilder.toString())

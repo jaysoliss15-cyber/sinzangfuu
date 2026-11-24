@@ -1,14 +1,11 @@
 package com.example
 
-import com.example.data.GeminiScriptClient
 import com.example.data.ScriptEvent
 import com.example.data.VideoRenderPipeline
 import com.example.domain.NaturalSort
 import com.example.domain.ScriptValidator
 import com.example.domain.StrictCleanDialogueSanitizer
 import com.example.domain.TransitionParser
-import java.io.IOException
-import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -186,112 +183,15 @@ class StudioPipelineDomainTest {
   }
 
   @Test
-  fun `gemini script client retries transient errors with 5s 15s 30s backoff and repairs digits`() =
-    runTest {
-      val observedDelays = mutableListOf<Long>()
-      var callCount = 0
-
-      val client =
-        GeminiScriptClient(
-          generateRawOverride = { prompt ->
-            callCount++
-            when (callCount) {
-              1 -> throw IOException("HTTP 429 rate limit exceeded")
-              2 -> throw IllegalStateException("HTTP 503 service unavailable")
-              3 -> throw IOException("Temporary network reset")
-              // 4th call completes Self-Audit (still has a stray digit requiring 1 targeted repair)
-              4 ->
-                """
-                ```
-                In 1994 the corridor went cold.
-                [SFX: flickering fluorescent tube]
-                ...
-                ...
-                ```
-                """.trimIndent()
-              // 5th call is targeted Repair Pass 1
-              else -> {
-                assertTrue(prompt.contains("FATAL ERROR"))
-                """
-                In nineteen ninety-four the corridor went cold.
-                [SFX: flickering fluorescent tube]
-                ...
-                ...
-                """.trimIndent()
-              }
-            }
-          },
-          delayFn = { ms -> observedDelays += ms },
-        )
-
-      val outcome =
-        client.runAutoPilotAndAudit(
-          topicOrDraft = "The hallway went dark.",
-          partNumber = 1,
-          generateFromTopic = false,
-        )
-
-      assertEquals(listOf(5_000L, 15_000L, 30_000L), observedDelays)
-      assertEquals(1, outcome.repairPassesUsed)
-      assertTrue(outcome.qaResult.isValid)
-      assertFalse(outcome.qaResult.hasFatalDigits)
-      assertTrue(outcome.cleanScript.contains("nineteen ninety-four"))
-    }
-
-  @Test
-  fun `gemini script client loads system instruction from godPromptFile on IO`() =
-    runTest {
-      val tmpFile = java.io.File.createTempFile("god_prompt_test", ".txt")
-      try {
-        tmpFile.writeText("Follow dark documentary tone strictly.")
-        val logMessages = mutableListOf<String>()
-        val client =
-          GeminiScriptClient(
-            godPromptFile = tmpFile,
-            generateRawOverride = { _ ->
-              """
-              The hallway tape continued spinning in silence.
-              [SFX: subtle magnetic tape hiss]
-              ...
-              ...
-              """.trimIndent()
-            },
-          )
-
-        val outcome =
-          client.runAutoPilotAndAudit(
-            topicOrDraft = "The hallway tape continued spinning.",
-            partNumber = 1,
-            generateFromTopic = true,
-            onLog = { msg, _ -> logMessages += msg },
-          )
-
-        assertTrue(outcome.qaResult.isValid)
-        assertTrue(
-          logMessages.any {
-            it.contains("Loaded master God Prompt (38 chars) from ${tmpFile.name}")
-          }
-        )
-      } finally {
-        tmpFile.delete()
-      }
-    }
-
-  @Test
-  fun `normalizes provider base urls cleanly`() {
-    assertEquals(
-      "https://api.openai.com/v1",
-      GeminiScriptClient.normalizeBaseUrl(
-        com.example.data.LlmProvider.CUSTOM,
-        "https://api.openai.com/v1/chat/completions/",
-      ),
+  fun `final bgm mix filter balances bgm gain with highpass and preserves voice loudness`() {
+    val filter = VideoRenderPipeline.buildFinalBgmMixFilter(42.5)
+    assertTrue(filter.contains("[1:a]highpass=f=90,volume=0.22,afade=t=out:st=42.500:d=3[bgm]"))
+    assertTrue(filter.contains("[0:a]volume=1.0[main_audio]"))
+    assertTrue(
+      filter.contains(
+        "[main_audio][bgm]amix=inputs=2:duration=first:dropout_transition=2:normalize=0,alimiter=limit=0.95[a_mix]"
+      )
     )
-    assertEquals(
-      "https://openrouter.ai/api/v1",
-      GeminiScriptClient.normalizeBaseUrl(
-        com.example.data.LlmProvider.OPENROUTER,
-        "https://openrouter.ai/api/v1/models",
-      ),
-    )
+    assertFalse(filter.contains("volume=2.0"))
   }
 }

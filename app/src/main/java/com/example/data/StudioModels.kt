@@ -1,62 +1,5 @@
 package com.example.data
 
-import java.util.Locale
-
-enum class LlmProvider(
-  val id: String,
-  val displayName: String,
-  val defaultBaseUrl: String,
-  val defaultModel: String,
-  val isBaseUrlEditable: Boolean = false,
-) {
-  GEMINI(
-    id = "gemini",
-    displayName = "Google Gemini",
-    defaultBaseUrl = "https://generativelanguage.googleapis.com/v1beta",
-    defaultModel = "gemini-2.5-flash",
-  ),
-  OPENROUTER(
-    id = "openrouter",
-    displayName = "OpenRouter",
-    defaultBaseUrl = "https://openrouter.ai/api/v1",
-    defaultModel = "google/gemini-2.5-flash",
-  ),
-  OPENAI(
-    id = "openai",
-    displayName = "OpenAI",
-    defaultBaseUrl = "https://api.openai.com/v1",
-    defaultModel = "gpt-4o-mini",
-  ),
-  GROQ(
-    id = "groq",
-    displayName = "Groq",
-    defaultBaseUrl = "https://api.groq.com/openai/v1",
-    defaultModel = "llama-3.3-70b-versatile",
-  ),
-  DEEPSEEK(
-    id = "deepseek",
-    displayName = "DeepSeek",
-    defaultBaseUrl = "https://api.deepseek.com/v1",
-    defaultModel = "deepseek-chat",
-  ),
-  CUSTOM(
-    id = "custom",
-    displayName = "Custom (OpenAI-Compatible)",
-    defaultBaseUrl = "",
-    defaultModel = "",
-    isBaseUrlEditable = true,
-  );
-
-  companion object {
-    fun fromId(raw: String?): LlmProvider {
-      val clean = raw?.trim()?.lowercase(Locale.ROOT)
-      return entries.firstOrNull {
-        it.id == clean || it.name.equals(raw?.trim(), ignoreCase = true)
-      } ?: GEMINI
-    }
-  }
-}
-
 enum class AppTab {
   STUDIO,
   MEDIA_HUB,
@@ -132,39 +75,13 @@ data class StudioConfig(
   val transitionOriginalName: String = "",
   val bgmOriginalName: String = "",
   val outroOriginalName: String = "",
-  val llmProvider: LlmProvider = LlmProvider.GEMINI,
-  val llmBaseUrl: String = LlmProvider.GEMINI.defaultBaseUrl,
-  val llmApiKey: String = "",
-  val llmModel: String = DEFAULT_GEMINI_MODEL,
-  val godPromptFileName: String = "",
-  val godPromptCharCount: Int = 0,
-  val godPromptWordCount: Int = 0,
-  val godPromptUpdatedAt: Long = 0L,
-  val autoPilotFullAuto: Boolean = false,
 ) {
-  val geminiApiKey: String
-    get() = llmApiKey
-
-  val geminiModel: String
-    get() = llmModel
-
-  val hasGodPromptFile: Boolean
-    get() = godPromptFileName.isNotBlank() && godPromptCharCount > 0
-
   companion object {
     const val DEFAULT_VOICE_ID = "N2lVS1w4EtoT3dr4eOWO"
     const val DEFAULT_MODEL_ID = "eleven_v4"
     const val DEFAULT_SFX_MODEL_ID = "eleven_text_to_sound_v2"
-    const val DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
   }
 }
-
-data class ModelDetectionState(
-  val isLoading: Boolean = false,
-  val models: List<String> = emptyList(),
-  val errorMessage: String? = null,
-  val detectedForProvider: LlmProvider? = null,
-)
 
 data class GodPromptImportResult(
   val fileName: String,

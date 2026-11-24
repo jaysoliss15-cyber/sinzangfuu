@@ -8,14 +8,11 @@ import com.example.data.AssetSlotStatus
 import com.example.data.AudioPipelineProcessor
 import com.example.data.ElevenLabsClient
 import com.example.data.FfmpegExecutor
-import com.example.data.GeminiScriptClient
-import com.example.data.LlmProvider
 import com.example.data.LogEntry
 import com.example.data.LogLevel
 import com.example.data.LowStorageWarning
 import com.example.data.MediaFileInfo
 import com.example.data.MediaHubState
-import com.example.data.ModelDetectionState
 import com.example.data.PartStatus
 import com.example.data.PipelineProgress
 import com.example.data.PreviewPlayerTarget
@@ -49,7 +46,6 @@ class StudioController(private val appContext: Context) {
   val fileManager = StudioFileManager(appContext)
   val ffmpegExecutor = FfmpegExecutor(appContext)
   val elevenLabsClient = ElevenLabsClient()
-  val geminiScriptClient = GeminiScriptClient(godPromptFile = fileManager.godPromptFile)
   private val audioProcessor = AudioPipelineProcessor(fileManager, elevenLabsClient, ffmpegExecutor)
   private val videoPipeline = VideoRenderPipeline(fileManager, ffmpegExecutor)
 
@@ -96,137 +92,12 @@ class StudioController(private val appContext: Context) {
   private val _snackbarEvent = MutableStateFlow<Pair<String, String?>?>(null)
   val snackbarEvent: StateFlow<Pair<String, String?>?> = _snackbarEvent.asStateFlow()
 
-  private val _godPromptPreview = MutableStateFlow("")
-  val godPromptPreview: StateFlow<String> = _godPromptPreview.asStateFlow()
-
-  private val _modelDetectionState = MutableStateFlow(ModelDetectionState())
-  val modelDetectionState: StateFlow<ModelDetectionState> = _modelDetectionState.asStateFlow()
-
   private var lastClearedDialogueBackup: String? = null
 
   init {
     fileManager.ensurePartFolders(_config.value.partCount)
     refreshWorkspaceAndMediaHub()
-    refreshGodPromptMetadataOnIo()
     appendLog("Studio initialized. Native FFmpeg ready: ${ffmpegExecutor.areBinariesAvailable()}", LogLevel.INFO)
-  }
-
-  private fun refreshGodPromptMetadataOnIo() {
-    scope.launch(Dispatchers.IO) {
-      val preview = fileManager.readGodPromptPreview()
-      _godPromptPreview.value = preview
-      if (preview.isEmpty() && _config.value.hasGodPromptFile) {
-        updateConfig {
-          it.copy(
-            godPromptFileName = "",
-            godPromptCharCount = 0,
-            godPromptWordCount = 0,
-            godPromptUpdatedAt = 0L,
-          )
-        }
-      }
-    }
-  }
-
-  fun importGodPromptFile(uri: Uri) {
-    scope.launch(Dispatchers.IO) {
-      runCatching {
-        val result = fileManager.importGodPromptFile(uri)
-        _godPromptPreview.value = result.previewText
-        updateConfig {
-          it.copy(
-            godPromptFileName = result.fileName,
-            godPromptCharCount = result.charCount,
-            godPromptWordCount = result.wordCount,
-            godPromptUpdatedAt = result.updatedAt,
-          )
-        }
-        appendLog(
-          "Imported God Prompt file: ${result.fileName} (${result.charCount} chars, ${result.wordCount} words).",
-          LogLevel.SUCCESS,
-        )
-        emitSnackbar("God Prompt loaded: ${result.fileName}")
-      }.onFailure { err ->
-        appendLog("God Prompt import failed: ${err.message}", LogLevel.ERROR)
-        emitSnackbar(err.message ?: "Failed to import God Prompt file")
-      }
-    }
-  }
-
-  fun clearGodPromptFile() {
-    scope.launch(Dispatchers.IO) {
-      fileManager.clearGodPromptFile()
-      _godPromptPreview.value = ""
-      updateConfig {
-        it.copy(
-          godPromptFileName = "",
-          godPromptCharCount = 0,
-          godPromptWordCount = 0,
-          godPromptUpdatedAt = 0L,
-        )
-      }
-      appendLog("Cleared master God Prompt file.", LogLevel.INFO)
-      emitSnackbar("God Prompt cleared")
-    }
-  }
-
-  fun clearDetectedModels() {
-    _modelDetectionState.value = ModelDetectionState()
-  }
-
-  fun detectAvailableModels(
-    provider: LlmProvider,
-    baseUrl: String,
-    apiKey: String,
-  ) {
-    _modelDetectionState.value =
-      ModelDetectionState(
-        isLoading = true,
-        models =
-          _modelDetectionState.value.models
-            .takeIf { _modelDetectionState.value.detectedForProvider == provider }
-            .orEmpty(),
-        errorMessage = null,
-        detectedForProvider = provider,
-      )
-    scope.launch {
-      runCatching {
-        geminiScriptClient.fetchAvailableModels(
-          provider = provider,
-          baseUrl = baseUrl,
-          apiKey = apiKey,
-        )
-      }.onSuccess { models ->
-        _modelDetectionState.value =
-          ModelDetectionState(
-            isLoading = false,
-            models = models,
-            errorMessage =
-              if (models.isEmpty()) "No text-generation models returned by ${provider.displayName}."
-              else null,
-            detectedForProvider = provider,
-          )
-        appendLog(
-          "Auto-detected ${models.size} model(s) from ${provider.displayName}.",
-          if (models.isNotEmpty()) LogLevel.SUCCESS else LogLevel.WARNING,
-        )
-        emitSnackbar(
-          if (models.isNotEmpty()) "Detected ${models.size} ${provider.displayName} models"
-          else "No models returned by ${provider.displayName}",
-        )
-      }.onFailure { err ->
-        val msg = err.message ?: "Failed to detect models"
-        _modelDetectionState.value =
-          ModelDetectionState(
-            isLoading = false,
-            models = emptyList(),
-            errorMessage = msg,
-            detectedForProvider = provider,
-          )
-        appendLog("Model detection failed (${provider.displayName}): $msg", LogLevel.ERROR)
-        emitSnackbar(msg)
-      }
-    }
   }
 
   fun refreshWorkspaceAndMediaHub() {
@@ -400,202 +271,6 @@ class StudioController(private val appContext: Context) {
       runLogQa = true,
       snackbarMessage = "Sanitized dialogue (${cleaned.length} chars)",
     )
-  }
-
-  fun runGeminiAutoPilot(
-    topicOrDraft: String,
-    generateFromTopic: Boolean,
-  ) {
-    if (activeJob?.isActive == true) {
-      emitSnackbar("Another studio task is currently running.")
-      return
-    }
-    val inputText = topicOrDraft.trim()
-    if (inputText.isEmpty()) {
-      emitSnackbar(
-        if (generateFromTopic) "Enter a story topic or outline for Gemini Auto-Pilot."
-        else "Paste or type a script draft before running Self-Audit."
-      )
-      return
-    }
-
-    val cfg = _config.value
-    val targetPart = cfg.selectedPart
-    val taskTitle =
-      if (generateFromTopic) "${cfg.llmProvider.displayName} Auto-Pilot (Part $targetPart)"
-      else "${cfg.llmProvider.displayName} Self-Audit (Part $targetPart)"
-
-    launchForegroundTask(taskTitle) {
-      val outcome =
-        geminiScriptClient.runAutoPilotAndAudit(
-          topicOrDraft = inputText,
-          partNumber = targetPart,
-          totalParts = cfg.partCount,
-          generateFromTopic = generateFromTopic,
-          provider = cfg.llmProvider,
-          baseUrl = cfg.llmBaseUrl,
-          apiKey = cfg.llmApiKey,
-          model = cfg.llmModel,
-          onProgress = { pct, step ->
-            _progress.value =
-              PipelineProgress(
-                isRunning = true,
-                taskTitle = taskTitle,
-                progressPercent = pct,
-                stepText = step,
-                etaText = computeDynamicEta(pct),
-                elapsedText = formatElapsedFromStart(),
-              )
-          },
-          onLog = ::appendLog,
-        )
-      replaceDialogueWithUndo(
-        newText = outcome.cleanScript,
-        runLogQa = true,
-        snackbarMessage =
-          "Part $targetPart script audited (${outcome.qaResult.charCount} chars, ${outcome.repairPassesUsed} repair(s))",
-      )
-    }
-  }
-
-  fun runAutoPilotEpisode(
-    topicPrompt: String,
-    fullAuto: Boolean,
-  ) {
-    if (activeJob?.isActive == true) {
-      emitSnackbar("Another studio task is currently running.")
-      return
-    }
-    val cleanTopic = topicPrompt.trim()
-    if (cleanTopic.isEmpty()) {
-      emitSnackbar("Enter an Episode Topic / Prompt first.")
-      return
-    }
-
-    val cfg = _config.value
-    if (fullAuto && cfg.apiKey.isBlank()) {
-      _runStatus.value = StudioRunStatus.ERROR
-      appendLog("ElevenLabs API Key missing for Full Auto. Set it in API & Settings or switch to Scripts Only.", LogLevel.ERROR)
-      emitSnackbar("Missing ElevenLabs API Key for Full Auto")
-      return
-    }
-
-    updateConfig { it.copy(autoPilotFullAuto = fullAuto) }
-    val totalParts = cfg.partCount.coerceIn(1, 30)
-    val taskTitle =
-      if (fullAuto) "Full Auto-Pilot ($totalParts Parts)"
-      else "Scripts Auto-Pilot ($totalParts Parts)"
-
-    launchForegroundTask(taskTitle) {
-      fileManager.ensurePartFolders(totalParts)
-      var priorTail = ""
-      var firstOrLatestScript = ""
-
-      val scriptStageWeight = if (fullAuto) 35.0 else 100.0
-      val perPartSpan = scriptStageWeight / totalParts.toDouble()
-
-      for (partNum in 1..totalParts) {
-        val partStart = (partNum - 1) * perPartSpan
-        val scriptEnd =
-          if (fullAuto) partStart + perPartSpan * 0.55
-          else partStart + perPartSpan
-
-        val outcome =
-          geminiScriptClient.runAutoPilotAndAudit(
-            topicOrDraft = cleanTopic,
-            partNumber = partNum,
-            totalParts = totalParts,
-            generateFromTopic = true,
-            provider = cfg.llmProvider,
-            baseUrl = cfg.llmBaseUrl,
-            apiKey = cfg.llmApiKey,
-            model = cfg.llmModel,
-            priorPartTail = priorTail,
-            onProgress = { subPct, step ->
-              val overall = (partStart + (scriptEnd - partStart) * (subPct / 100.0)).toInt().coerceIn(1, 99)
-              _progress.value =
-                PipelineProgress(
-                  isRunning = true,
-                  taskTitle = taskTitle,
-                  progressPercent = overall,
-                  stepText = step,
-                  etaText = computeDynamicEta(overall),
-                  elapsedText = formatElapsedFromStart(),
-                )
-            },
-            onLog = ::appendLog,
-          )
-
-        val partDir = fileManager.getPartDir(partNum).apply { mkdirs() }
-        val transcriptFile = File(partDir, "${partNum}_transcript.txt")
-        transcriptFile.writeText(outcome.qaResult.cleanedTranscript, Charsets.UTF_8)
-        appendLog("Saved Part $partNum clean transcript (${outcome.qaResult.charCount} chars).", LogLevel.INFO)
-
-        priorTail = outcome.qaResult.cleanedTranscript.takeLast(500)
-        if (firstOrLatestScript.isEmpty() || partNum == cfg.selectedPart) {
-          firstOrLatestScript = outcome.cleanScript
-        }
-
-        if (fullAuto) {
-          val ttsStart = scriptEnd
-          val ttsEnd = partStart + perPartSpan
-          audioProcessor.processPartVoice(
-            partNumber = partNum,
-            qaResult = outcome.qaResult,
-            config = cfg,
-            onProgress = { subPct, step, _ ->
-              val overall = (ttsStart + (ttsEnd - ttsStart) * (subPct / 100.0)).toInt().coerceIn(1, 99)
-              _progress.value =
-                PipelineProgress(
-                  isRunning = true,
-                  taskTitle = taskTitle,
-                  progressPercent = overall,
-                  stepText = step,
-                  etaText = computeDynamicEta(overall),
-                  elapsedText = formatElapsedFromStart(),
-                )
-            },
-            onLog = ::appendLog,
-          )
-        }
-        refreshWorkspaceAndMediaHub()
-      }
-
-      if (firstOrLatestScript.isNotBlank()) {
-        replaceDialogueWithUndo(
-          newText = firstOrLatestScript,
-          runLogQa = true,
-          snackbarMessage =
-            if (fullAuto) "Scripts + voices ready; starting video render..."
-            else "Auto-Pilot generated $totalParts script(s)",
-        )
-      }
-
-      if (fullAuto) {
-        val finalVideo =
-          videoPipeline.renderFullDocumentary(
-            config = cfg,
-            onProgress = { subPct, step, _ ->
-              val overall = (35.0 + 65.0 * (subPct / 100.0)).toInt().coerceIn(35, 100)
-              _progress.value =
-                PipelineProgress(
-                  isRunning = true,
-                  taskTitle = taskTitle,
-                  progressPercent = overall,
-                  stepText = step,
-                  etaText = computeDynamicEta(overall),
-                  elapsedText = formatElapsedFromStart(),
-                )
-            },
-            onLog = ::appendLog,
-          )
-        refreshWorkspaceAndMediaHub()
-        emitSnackbar("Full Auto-Pilot complete: ${finalVideo.name}")
-      } else {
-        refreshWorkspaceAndMediaHub()
-        emitSnackbar("Auto-Pilot generated $totalParts part script(s)")
-      }
-    }
   }
 
   private fun computeDynamicEta(pct: Int): String {

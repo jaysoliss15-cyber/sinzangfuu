@@ -11,8 +11,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -32,18 +30,13 @@ import com.example.data.PipelineProgress
 import com.example.data.RenderFilterMode
 import com.example.data.ScriptQaResult
 import com.example.data.StudioConfig
-import com.example.ui.components.AutoPilotCard
 import com.example.ui.components.DialogueEditorCard
 import com.example.ui.components.PartWorkspaceCard
 import com.example.ui.components.ProgressAndLogCard
 import com.example.ui.components.RenderControlsCard
 import com.example.ui.theme.StudioAmber
 import com.example.ui.theme.StudioCard
-import com.example.ui.theme.StudioCardDeep
-import com.example.ui.theme.StudioCyan
-import com.example.ui.theme.StudioOutline
 import com.example.ui.theme.StudioRed
-import com.example.ui.theme.StudioTextMuted
 import com.example.ui.theme.StudioTextPrimary
 import java.util.Locale
 
@@ -87,13 +80,6 @@ fun StudioTabRoute(
     onClearDialogue = { viewModel.clearDialogue() },
     onPasteDialogue = { viewModel.pasteFromClipboard() },
     onSanitizeDialogue = { viewModel.sanitizeDialogue() },
-    onRunGeminiAutoPilot = { viewModel.runGeminiAutoPilot(it) },
-    onRunGeminiSelfAudit = { viewModel.runGeminiSelfAudit() },
-    onReadClipboard = { viewModel.readClipboard() },
-    onAutoPilotFullAutoToggle = { viewModel.setAutoPilotFullAuto(it) },
-    onRunAutoPilotEpisode = { topic, fullAuto ->
-      viewModel.runAutoPilotEpisode(topic, fullAuto)
-    },
     onAutoPasteToggle = { viewModel.setAutoPasteEnabled(it) },
     onAutoNextToggle = { viewModel.setAutoNextPartEnabled(it) },
     onDownloadVoice = { viewModel.startDownloadVoice() },
@@ -134,11 +120,6 @@ fun StudioScreen(
   onClearDialogue: () -> Unit,
   onPasteDialogue: () -> Unit,
   onSanitizeDialogue: () -> Unit,
-  onRunGeminiAutoPilot: (String) -> Unit,
-  onRunGeminiSelfAudit: () -> Unit,
-  onReadClipboard: () -> String?,
-  onAutoPilotFullAutoToggle: (Boolean) -> Unit,
-  onRunAutoPilotEpisode: (topicPrompt: String, fullAuto: Boolean) -> Unit,
   onAutoPasteToggle: (Boolean) -> Unit,
   onAutoNextToggle: (Boolean) -> Unit,
   onDownloadVoice: () -> Unit,
@@ -157,61 +138,6 @@ fun StudioScreen(
   modifier: Modifier = Modifier,
 ) {
   var showTotalZeroConfirm by remember { mutableStateOf(false) }
-  var showAutoPilotDialog by remember { mutableStateOf(false) }
-  var autoPilotTopicInput by remember { mutableStateOf("") }
-
-  if (showAutoPilotDialog) {
-    AlertDialog(
-      onDismissRequest = { showAutoPilotDialog = false },
-      containerColor = StudioCard,
-      title = { Text("${config.llmProvider.displayName} Auto-Pilot (Part ${config.selectedPart})", color = StudioCyan) },
-      text = {
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-          Text(
-            text = "Enter a horror/documentary topic, scene outline, or story brief. ${config.llmProvider.displayName} will draft Part ${config.selectedPart}, run Self-Audit, and repair any QA issues.",
-            color = StudioTextPrimary,
-          )
-          OutlinedTextField(
-            value = autoPilotTopicInput,
-            onValueChange = { autoPilotTopicInput = it },
-            minLines = 3,
-            maxLines = 6,
-            placeholder = {
-              Text("e.g. The nineteen ninety-four lighthouse keeper radio transcript...", color = StudioTextMuted)
-            },
-            colors =
-              OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = StudioCyan,
-                unfocusedBorderColor = StudioOutline,
-                focusedContainerColor = StudioCardDeep,
-                unfocusedContainerColor = StudioCardDeep,
-                focusedTextColor = StudioTextPrimary,
-                unfocusedTextColor = StudioTextPrimary,
-              ),
-            modifier = Modifier.fillMaxWidth(),
-          )
-        }
-      },
-      confirmButton = {
-        Button(
-          onClick = {
-            val prompt = autoPilotTopicInput.trim()
-            showAutoPilotDialog = false
-            if (prompt.isNotEmpty()) {
-              onRunGeminiAutoPilot(prompt)
-            }
-          },
-          enabled = autoPilotTopicInput.isNotBlank() && !progress.isRunning,
-          colors = ButtonDefaults.buttonColors(containerColor = StudioCyan, contentColor = Color(0xFF002022)),
-        ) {
-          Text("Generate & Audit", maxLines = 1, softWrap = false)
-        }
-      },
-      dismissButton = {
-        TextButton(onClick = { showAutoPilotDialog = false }) { Text("Cancel") }
-      },
-    )
-  }
 
   if (showTotalZeroConfirm) {
     AlertDialog(
@@ -288,17 +214,6 @@ fun StudioScreen(
         )
       }
 
-      item(key = "autopilot_card") {
-        AutoPilotCard(
-          partCount = config.partCount,
-          fullAuto = config.autoPilotFullAuto,
-          isBusy = progress.isRunning,
-          onReadClipboard = onReadClipboard,
-          onFullAutoToggle = onAutoPilotFullAutoToggle,
-          onRunAutoPilotEpisode = onRunAutoPilotEpisode,
-        )
-      }
-
       item(key = "dialogue_editor") {
         DialogueEditorCard(
           dialogueText = dialogueText,
@@ -311,8 +226,6 @@ fun StudioScreen(
           onClearDialogue = onClearDialogue,
           onPasteDialogue = onPasteDialogue,
           onSanitizeDialogue = onSanitizeDialogue,
-          onOpenAutoPilot = { showAutoPilotDialog = true },
-          onRunSelfAudit = onRunGeminiSelfAudit,
           onAutoPasteToggle = onAutoPasteToggle,
           onAutoNextToggle = onAutoNextToggle,
           onDownloadVoice = onDownloadVoice,

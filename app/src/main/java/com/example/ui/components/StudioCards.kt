@@ -319,7 +319,7 @@ fun PartWorkspaceCard(
 
       HorizontalDivider(color = StudioOutline)
 
-      // Compact 2-column action grid so AutoPilotCard and DialogueEditor appear higher on screen
+      // Compact 2-column action grid so DialogueEditor appears higher on screen
       Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(
           modifier = Modifier.fillMaxWidth(),
@@ -443,8 +443,6 @@ fun DialogueEditorCard(
   onClearDialogue: () -> Unit,
   onPasteDialogue: () -> Unit,
   onSanitizeDialogue: () -> Unit,
-  onOpenAutoPilot: () -> Unit,
-  onRunSelfAudit: () -> Unit,
   onAutoPasteToggle: (Boolean) -> Unit,
   onAutoNextToggle: (Boolean) -> Unit,
   onDownloadVoice: () -> Unit,
@@ -485,7 +483,7 @@ fun DialogueEditorCard(
         }
       }
 
-      // Action Toolbar: Clear + Paste + Sanitize + Auto-Pilot + Self-Audit + Auto-Paste + Auto-Next
+      // Action Toolbar: Clear + Paste + Sanitize + Auto-Paste + Auto-Next
       Row(
         modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -523,30 +521,6 @@ fun DialogueEditorCard(
           Icon(Icons.Filled.CleaningServices, contentDescription = null, modifier = Modifier.size(16.dp), tint = StudioAmber)
           Spacer(Modifier.width(6.dp))
           Text("Sanitize", color = StudioAmber, maxLines = 1, softWrap = false)
-        }
-
-        OutlinedButton(
-          onClick = onOpenAutoPilot,
-          enabled = !isBusy,
-          border = BorderStroke(1.dp, StudioCyan.copy(alpha = 0.65f)),
-          contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
-          modifier = Modifier.heightIn(min = 48.dp).testTag("gemini_autopilot_button"),
-        ) {
-          Icon(Icons.Filled.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp), tint = StudioCyan)
-          Spacer(Modifier.width(6.dp))
-          Text("Auto-Pilot", color = StudioCyan, maxLines = 1, softWrap = false)
-        }
-
-        OutlinedButton(
-          onClick = onRunSelfAudit,
-          enabled = !isBusy && dialogueText.isNotBlank(),
-          border = BorderStroke(1.dp, StudioGreen.copy(alpha = 0.65f)),
-          contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
-          modifier = Modifier.heightIn(min = 48.dp).testTag("gemini_self_audit_button"),
-        ) {
-          Icon(Icons.Filled.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp), tint = StudioGreen)
-          Spacer(Modifier.width(6.dp))
-          Text("Self-Audit", color = StudioGreen, maxLines = 1, softWrap = false)
         }
 
         Surface(

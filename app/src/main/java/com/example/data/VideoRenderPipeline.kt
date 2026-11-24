@@ -1006,10 +1006,7 @@ class VideoRenderPipeline(
           val fadeStart =
             if (outroDuration > 0.0) max(0.0, masterDuration - outroDuration - 2.0)
             else max(0.0, masterDuration - 5.0)
-          val filterComplex =
-            "[1:a]volume=0.10,afade=t=out:st=${formatDuration(fadeStart)}:d=3[bgm];" +
-              "[0:a]volume=1.0[main_audio];" +
-              "[main_audio][bgm]amix=inputs=2:duration=first:dropout_transition=2,volume=2.0[a_mix]"
+          val filterComplex = buildFinalBgmMixFilter(fadeStart)
           listOf(
             "-i",
             masterNoBgm.absolutePath,
@@ -1161,6 +1158,13 @@ class VideoRenderPipeline(
       val mins = total / 60
       val rem = total % 60
       return if (mins > 0) "${mins}m ${rem}s" else "${rem}s"
+    }
+
+    internal fun buildFinalBgmMixFilter(fadeStartSeconds: Double): String {
+      val fadeStartStr = String.format(Locale.US, "%.3f", fadeStartSeconds.coerceAtLeast(0.0))
+      return "[1:a]highpass=f=90,volume=0.22,afade=t=out:st=$fadeStartStr:d=3[bgm];" +
+        "[0:a]volume=1.0[main_audio];" +
+        "[main_audio][bgm]amix=inputs=2:duration=first:dropout_transition=2:normalize=0,alimiter=limit=0.95[a_mix]"
     }
   }
 }

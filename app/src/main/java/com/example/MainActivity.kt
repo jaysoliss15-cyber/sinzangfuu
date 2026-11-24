@@ -180,11 +180,6 @@ fun MissingPageStudioApp(
       if (uri != null) viewModel.importDialogueTxt(uri)
     }
 
-  val godPromptFilePicker =
-    rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-      if (uri != null) viewModel.importGodPromptFile(uri)
-    }
-
   val stockLoopsMultiPicker =
     rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
       if (uris.isNotEmpty()) viewModel.addStockLoops(uris)
@@ -443,11 +438,6 @@ fun MissingPageStudioApp(
           AppTab.API_SETTINGS -> {
             ApiSettingsTabRoute(
               viewModel = viewModel,
-              onPickGodPromptFile = {
-                godPromptFilePicker.launch(
-                  arrayOf("text/plain", "text/csv", "text/comma-separated-values", "*/*")
-                )
-              },
               modifier = Modifier.weight(1f),
             )
           }

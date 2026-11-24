@@ -7,9 +7,9 @@ import android.media.MediaPlayer
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import com.example.StudioApplication
-import com.example.data.LlmProvider
 import com.example.data.LogLevel
 import com.example.data.RenderFilterMode
+import com.example.data.StudioConfig
 import java.security.MessageDigest
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -31,8 +31,6 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
   val previewTarget = controller.previewTarget
   val lowStorageWarning = controller.lowStorageWarning
   val snackbarEvent = controller.snackbarEvent
-  val godPromptPreview = controller.godPromptPreview
-  val modelDetectionState = controller.modelDetectionState
 
   private var audioPlayer: MediaPlayer? = null
   private val _playingAudioPart = MutableStateFlow<Int?>(null)
@@ -103,67 +101,25 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     controller.updateConfig { it.copy(autoCleanAfterExport = enabled) }
   }
 
-  fun setAutoPilotFullAuto(fullAuto: Boolean) {
-    controller.updateConfig { it.copy(autoPilotFullAuto = fullAuto) }
-  }
-
   fun saveApiSettings(
     apiKey: String,
     voiceId: String,
     modelId: String,
     sfxModelId: String,
-    llmProvider: LlmProvider,
-    llmBaseUrl: String,
-    llmApiKey: String,
-    llmModel: String,
   ) {
-    val normalizedBaseUrl =
-      if (llmProvider.isBaseUrlEditable) {
-        llmBaseUrl.trim().trimEnd('/')
-      } else {
-        llmBaseUrl.trim().ifEmpty { llmProvider.defaultBaseUrl }.trimEnd('/')
-      }
-    val effectiveModel =
-      llmModel.trim().ifEmpty { llmProvider.defaultModel }
     controller.updateConfig {
       it.copy(
         apiKey = apiKey.trim(),
-        voiceId = voiceId.trim().ifEmpty { com.example.data.StudioConfig.DEFAULT_VOICE_ID },
-        modelId = modelId.trim().ifEmpty { com.example.data.StudioConfig.DEFAULT_MODEL_ID },
-        sfxModelId = sfxModelId.trim().ifEmpty { com.example.data.StudioConfig.DEFAULT_SFX_MODEL_ID },
-        llmProvider = llmProvider,
-        llmBaseUrl = normalizedBaseUrl,
-        llmApiKey = llmApiKey.trim(),
-        llmModel = effectiveModel,
+        voiceId = voiceId.trim().ifEmpty { StudioConfig.DEFAULT_VOICE_ID },
+        modelId = modelId.trim().ifEmpty { StudioConfig.DEFAULT_MODEL_ID },
+        sfxModelId = sfxModelId.trim().ifEmpty { StudioConfig.DEFAULT_SFX_MODEL_ID },
       )
     }
-    controller.appendLog(
-      "Saved ElevenLabs & ${llmProvider.displayName} API settings.",
-      LogLevel.SUCCESS,
-    )
-    controller.emitSnackbar("All API settings saved")
+    controller.appendLog("Saved ElevenLabs API & voice settings.", LogLevel.SUCCESS)
+    controller.emitSnackbar("ElevenLabs settings saved")
   }
 
-  fun detectAvailableModels(
-    provider: LlmProvider,
-    baseUrl: String,
-    apiKey: String,
-  ) = controller.detectAvailableModels(provider = provider, baseUrl = baseUrl, apiKey = apiKey)
-
-  fun clearDetectedModels() = controller.clearDetectedModels()
-
-  fun importGodPromptFile(uri: Uri) = controller.importGodPromptFile(uri)
-  fun clearGodPromptFile() = controller.clearGodPromptFile()
-
-  fun readClipboard(): String? = readClipboardPlainText()
-
   fun sanitizeDialogue() = controller.sanitizeDialogue()
-  fun runGeminiAutoPilot(topicOrOutline: String) =
-    controller.runGeminiAutoPilot(topicOrDraft = topicOrOutline, generateFromTopic = true)
-  fun runAutoPilotEpisode(topicPrompt: String, fullAuto: Boolean) =
-    controller.runAutoPilotEpisode(topicPrompt = topicPrompt, fullAuto = fullAuto)
-  fun runGeminiSelfAudit() =
-    controller.runGeminiAutoPilot(topicOrDraft = dialogueText.value, generateFromTopic = false)
   fun startDownloadVoice() = controller.startDownloadVoice()
   fun startFilterPreview() = controller.startFilterPreview()
   fun startSmartRender(ignoreLowStorage: Boolean = false) =

@@ -1,7 +1,6 @@
 package com.example
 
 import android.content.Context
-import android.net.Uri
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.StudioFileManager
 import com.example.service.StudioController
@@ -46,148 +45,45 @@ class ExampleRobolectricTest {
   }
 
   @Test
-  fun `config repository persists multi-provider llm settings and god prompt metadata`() {
+  fun `config repository persists elevenlabs voice and render settings cleanly`() {
     val context = ApplicationProvider.getApplicationContext<Context>()
     val prefs = context.getSharedPreferences("missing_page_studio_config", Context.MODE_PRIVATE)
-    prefs.edit().clear()
-      .putString("script_writer_god_prompt", "Legacy inline prompt")
-      .putString("gemini_api_key", "AIzaMigratedKey")
-      .putString("gemini_model", "gemini-2.5-pro")
-      .commit()
+    prefs.edit().clear().commit()
 
     val repo = com.example.data.StudioConfigRepository(context)
-    val migrated = repo.load()
-    assertEquals(com.example.data.LlmProvider.GEMINI, migrated.llmProvider)
-    assertEquals("https://generativelanguage.googleapis.com/v1beta", migrated.llmBaseUrl)
-    assertEquals("AIzaMigratedKey", migrated.llmApiKey)
-    assertEquals("AIzaMigratedKey", migrated.geminiApiKey)
-    assertEquals("gemini-2.5-pro", migrated.llmModel)
-    assertEquals(false, migrated.autoPilotFullAuto)
+    val initial = repo.load()
+    assertEquals(com.example.data.StudioConfig.DEFAULT_VOICE_ID, initial.voiceId)
+    assertEquals(com.example.data.StudioConfig.DEFAULT_MODEL_ID, initial.modelId)
+    assertEquals(com.example.data.StudioConfig.DEFAULT_SFX_MODEL_ID, initial.sfxModelId)
 
     val updated =
-      migrated.copy(
+      initial.copy(
         apiKey = "el_key_123",
-        llmProvider = com.example.data.LlmProvider.OPENROUTER,
-        llmBaseUrl = "https://openrouter.ai/api/v1",
-        llmApiKey = "sk-or-v1-test",
-        llmModel = "anthropic/claude-3.5-sonnet",
-        godPromptFileName = "master_prompt.txt",
-        godPromptCharCount = 12_400,
-        godPromptWordCount = 2_050,
-        godPromptUpdatedAt = 1_730_000_000_000L,
-        autoPilotFullAuto = true,
+        voiceId = "voice_custom_456",
+        modelId = "eleven_turbo_v2_5",
+        sfxModelId = "eleven_text_to_sound_v2",
+        partCount = 6,
+        selectedPart = 3,
+        filterMode = com.example.data.RenderFilterMode.STANDARD_HORROR,
+        turboModeEnabled = false,
+        smartResumeEnabled = true,
+        transitionsAfter = "2,4",
+        autoCleanAfterExport = true,
       )
     repo.save(updated)
 
     val reloaded = repo.load()
     assertEquals("el_key_123", reloaded.apiKey)
-    assertEquals(com.example.data.LlmProvider.OPENROUTER, reloaded.llmProvider)
-    assertEquals("https://openrouter.ai/api/v1", reloaded.llmBaseUrl)
-    assertEquals("sk-or-v1-test", reloaded.llmApiKey)
-    assertEquals("anthropic/claude-3.5-sonnet", reloaded.llmModel)
-    assertEquals("master_prompt.txt", reloaded.godPromptFileName)
-    assertEquals(12_400, reloaded.godPromptCharCount)
-    assertEquals(2_050, reloaded.godPromptWordCount)
-    assertEquals(1_730_000_000_000L, reloaded.godPromptUpdatedAt)
-    assertTrue(reloaded.hasGodPromptFile)
-    assertEquals(true, reloaded.autoPilotFullAuto)
-    assertFalse(prefs.contains("script_writer_god_prompt"))
-  }
-
-  @Test
-  fun `file manager imports csv or txt god prompt file and generates preview cleanly`() {
-    val context = ApplicationProvider.getApplicationContext<Context>()
-    val fileManager = StudioFileManager(context)
-    val sourceFile = File(context.cacheDir, "god_prompt_rules.csv")
-    sourceFile.writeText("rule,instruction\n1,Never use digits in spoken narration.\n2,Include eerie atmospheric pauses.\n")
-
-    val result = fileManager.importGodPromptFile(Uri.fromFile(sourceFile))
-    assertEquals("god_prompt_rules.csv", result.fileName)
-    assertTrue(result.charCount > 0)
-    assertTrue(result.wordCount >= 10)
-    assertTrue(result.previewText.contains("Never use digits"))
-    assertTrue(fileManager.godPromptFile.exists())
-    assertTrue(fileManager.readGodPromptPreview().contains("rule,instruction"))
-
-    fileManager.clearGodPromptFile()
-    assertFalse(fileManager.godPromptFile.exists())
-    assertEquals("", fileManager.readGodPromptPreview())
-    sourceFile.delete()
-  }
-
-  @Test
-  fun `parses gemini models json filtering generateContent and stripping models prefix`() {
-    val json =
-      """
-      {
-        "models": [
-          {
-            "name": "models/gemini-2.5-pro",
-            "supportedGenerationMethods": ["generateContent", "countTokens"]
-          },
-          {
-            "name": "models/text-embedding-004",
-            "supportedGenerationMethods": ["embedContent"]
-          },
-          {
-            "name": "models/gemini-2.5-flash",
-            "supportedGenerationMethods": ["generateContent"]
-          },
-          {
-            "name": "models/gemini-2.5-flash",
-            "supportedGenerationMethods": ["generateContent"]
-          }
-        ]
-      }
-      """.trimIndent()
-
-    val parsed = com.example.data.GeminiScriptClient.parseGeminiModelsJson(json)
-    assertEquals(listOf("gemini-2.5-flash", "gemini-2.5-pro"), parsed)
-  }
-
-  @Test
-  fun `parses openai compatible models json and chat completion content`() {
-    val modelsJson =
-      """
-      {
-        "object": "list",
-        "data": [
-          {"id": "openai/gpt-4o-mini"},
-          {"id": "anthropic/claude-3.5-sonnet"},
-          {"id": "deepseek/deepseek-chat"},
-          {"id": "openai/gpt-4o-mini"},
-          {"id": "  "}
-        ]
-      }
-      """.trimIndent()
-
-    val parsed = com.example.data.GeminiScriptClient.parseOpenAiModelsJson(modelsJson)
-    assertEquals(
-      listOf(
-        "anthropic/claude-3.5-sonnet",
-        "deepseek/deepseek-chat",
-        "openai/gpt-4o-mini",
-      ),
-      parsed,
-    )
-
-    val completionJson =
-      """
-      {
-        "choices": [
-          {
-            "message": {
-              "role": "assistant",
-              "content": "The corridor lights flickered twice.\n...\n..."
-            }
-          }
-        ]
-      }
-      """.trimIndent()
-    assertEquals(
-      "The corridor lights flickered twice.\n...\n...",
-      com.example.data.GeminiScriptClient.parseOpenAiChatCompletionContent(completionJson),
-    )
+    assertEquals("voice_custom_456", reloaded.voiceId)
+    assertEquals("eleven_turbo_v2_5", reloaded.modelId)
+    assertEquals("eleven_text_to_sound_v2", reloaded.sfxModelId)
+    assertEquals(6, reloaded.partCount)
+    assertEquals(3, reloaded.selectedPart)
+    assertEquals(com.example.data.RenderFilterMode.STANDARD_HORROR, reloaded.filterMode)
+    assertFalse(reloaded.turboModeEnabled)
+    assertTrue(reloaded.smartResumeEnabled)
+    assertEquals("2,4", reloaded.transitionsAfter)
+    assertTrue(reloaded.autoCleanAfterExport)
   }
 
   @Test
@@ -393,61 +289,4 @@ class ExampleRobolectricTest {
       stockFile.delete()
     }
 
-  @Test
-  fun `custom api error formatting preserves http code truncated body and reasoning_content`() {
-    val longRawBody = "upstream gateway error: " + "X".repeat(500)
-    val httpErr =
-      com.example.data.GeminiScriptClient.formatHttpError(
-        provider = com.example.data.LlmProvider.CUSTOM,
-        code = 502,
-        url = "https://custom.llm.local/v1/chat/completions",
-        rawBody = longRawBody,
-      )
-    assertTrue(httpErr.contains("HTTP 502"))
-    assertTrue(httpErr.contains("upstream gateway error:"))
-    assertTrue(httpErr.length < 520)
-
-    val reasoningOnlyJson =
-      """
-      {
-        "choices": [
-          {
-            "finish_reason": "length",
-            "message": {
-              "role": "assistant",
-              "content": "",
-              "reasoning_content": "Thinking step by step about the horror script structure before writing..."
-            }
-          }
-        ]
-      }
-      """.trimIndent()
-    val parsed = com.example.data.GeminiScriptClient.parseOpenAiChatResponse(reasoningOnlyJson)
-    assertEquals("", parsed.content)
-    assertTrue(parsed.reasoningContent.startsWith("Thinking step by step"))
-    val reasoningError =
-      com.example.data.GeminiScriptClient.formatEmptyOpenAiCompletionError(
-        provider = com.example.data.LlmProvider.DEEPSEEK,
-        httpCode = 200,
-        rawBody = reasoningOnlyJson,
-        parsed = parsed,
-      )
-    assertTrue(reasoningError.contains("HTTP 200"))
-    assertTrue(reasoningError.contains("reasoning_content"))
-    assertTrue(reasoningError.contains("finish_reason=length"))
-    assertTrue(reasoningError.contains("Thinking step by step"))
-
-    val malformedBodyJson = """{"choices":[{"finish_reason":"stop","message":{"role":"assistant"}}]}"""
-    val blankParsed = com.example.data.GeminiScriptClient.parseOpenAiChatResponse(malformedBodyJson)
-    val blankError =
-      com.example.data.GeminiScriptClient.formatEmptyOpenAiCompletionError(
-        provider = com.example.data.LlmProvider.CUSTOM,
-        httpCode = 200,
-        rawBody = malformedBodyJson,
-        parsed = blankParsed,
-      )
-    assertTrue(blankError.contains("HTTP 200"))
-    assertTrue(blankError.contains("Body:"))
-    assertTrue(blankError.contains("finish_reason=stop"))
-  }
 }
