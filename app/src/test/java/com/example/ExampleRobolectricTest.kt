@@ -51,13 +51,16 @@ class ExampleRobolectricTest {
     prefs.edit().clear().commit()
 
     val repo = com.example.data.StudioConfigRepository(context)
-    val initial = repo.load()
-    assertEquals(com.example.data.StudioConfig.DEFAULT_VOICE_ID, initial.voiceId)
-    assertEquals(com.example.data.StudioConfig.DEFAULT_MODEL_ID, initial.modelId)
-    assertEquals(com.example.data.StudioConfig.DEFAULT_SFX_MODEL_ID, initial.sfxModelId)
+    // Simulate legacy install with auto_clean_after_export=false before v2 migration
+    prefs.edit().putBoolean("auto_clean_after_export", false).commit()
+    val migrated = repo.load()
+    assertTrue(migrated.autoCleanAfterExport)
+    assertEquals(com.example.data.StudioConfig.DEFAULT_VOICE_ID, migrated.voiceId)
+    assertEquals(com.example.data.StudioConfig.DEFAULT_MODEL_ID, migrated.modelId)
+    assertEquals(com.example.data.StudioConfig.DEFAULT_SFX_MODEL_ID, migrated.sfxModelId)
 
     val updated =
-      initial.copy(
+      migrated.copy(
         apiKey = "el_key_123",
         voiceId = "voice_custom_456",
         modelId = "eleven_turbo_v2_5",
@@ -68,7 +71,7 @@ class ExampleRobolectricTest {
         turboModeEnabled = false,
         smartResumeEnabled = true,
         transitionsAfter = "2,4",
-        autoCleanAfterExport = true,
+        autoCleanAfterExport = false,
       )
     repo.save(updated)
 
@@ -83,7 +86,7 @@ class ExampleRobolectricTest {
     assertFalse(reloaded.turboModeEnabled)
     assertTrue(reloaded.smartResumeEnabled)
     assertEquals("2,4", reloaded.transitionsAfter)
-    assertTrue(reloaded.autoCleanAfterExport)
+    assertFalse(reloaded.autoCleanAfterExport)
   }
 
   @Test
@@ -289,4 +292,68 @@ class ExampleRobolectricTest {
       stockFile.delete()
     }
 
+  @Test
+  fun `video render pipeline caps bitrate with vbv maxrate and cleans intermediate files`() =
+    runTest {
+      val context = ApplicationProvider.getApplicationContext<Context>()
+      val fileManager = StudioFileManager(context)
+      fileManager.cleanTempWorkspaceOnly()
+      fileManager.ensurePartFolders(1)
+      fileManager.stockLoopsDir.mkdirs()
+      val stockFile =
+        File(fileManager.stockLoopsDir, "night_hallway.mp4").apply {
+          writeBytes(ByteArray(128) { 1 })
+        }
+      val partDir = fileManager.getPartDir(1)
+      File(partDir, "1.wav").writeBytes(ByteArray(128) { 2 })
+
+      // Seed stale temp and legacy un-capped graded cache files
+      val staleTmp = File(fileManager.workspaceDir, ".tmp_crashed_render.mp4").apply { writeBytes(byteArrayOf(1, 2, 3)) }
+      val legacyGraded = File(fileManager.workspaceDir, "graded_night_hallway_standard_horror.mp4").apply { writeBytes(byteArrayOf(4, 5, 6)) }
+
+      val capturedCommands = mutableListOf<List<String>>()
+      val pipeline =
+        com.example.data.VideoRenderPipeline(
+          fileManager = fileManager,
+          ffmpegExecutor = com.example.data.FfmpegExecutor(context),
+          ffmpegRunner = { args, _ ->
+            capturedCommands += args
+            val outFile = File(args.last())
+            outFile.parentFile?.mkdirs()
+            outFile.writeBytes(ByteArray(256) { 9 })
+            com.example.data.CommandExecutionResult(exitCode = 0, output = "time=00:00:05.00")
+          },
+          durationProber = { 10.0 },
+          audioStreamProber = { true },
+        )
+
+      val cfg = com.example.data.StudioConfig()
+      assertTrue(cfg.autoCleanAfterExport)
+
+      val output =
+        pipeline.renderFullDocumentary(
+          config = cfg.copy(autoCleanAfterExport = false),
+          onProgress = { _, _, _ -> },
+          onLog = { _, _ -> },
+        )
+
+      assertTrue(output.exists() && output.length() > 0L)
+      assertFalse(staleTmp.exists())
+      assertFalse(legacyGraded.exists())
+      assertFalse(File(fileManager.workspaceDir, "part_1_voice_raw.wav").exists())
+      assertFalse(File(fileManager.workspaceDir, "MASTER_NO_BGM.mp4").exists())
+      assertFalse(File(fileManager.workspaceDir, "master_video_list.txt").exists())
+
+      val gradedCmd =
+        capturedCommands.first { args ->
+          args.last().contains("graded_night_hallway_standard_horror_v2.mp4")
+        }
+      assertTrue(gradedCmd.contains("-crf") && gradedCmd.contains(com.example.data.VideoRenderPipeline.DEFAULT_VIDEO_CRF))
+      assertTrue(gradedCmd.contains("-maxrate") && gradedCmd.contains(com.example.data.VideoRenderPipeline.DEFAULT_VIDEO_MAXRATE))
+      assertTrue(gradedCmd.contains("-bufsize") && gradedCmd.contains(com.example.data.VideoRenderPipeline.DEFAULT_VIDEO_BUFSIZE))
+
+      fileManager.cleanTempWorkspaceOnly()
+      output.delete()
+      stockFile.delete()
+    }
 }

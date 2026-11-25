@@ -336,7 +336,7 @@ fun MediaHubScreen(
             )
             if (state.finishedVideos.isEmpty()) {
               Text(
-                text = "No finished renders yet. Run 1-Click Smart Render or Full Auto-Pilot in Studio.",
+                text = "No finished renders yet. Run 1-Click Smart Render in Studio.",
                 style = MaterialTheme.typography.bodySmall,
                 color = StudioTextMuted,
               )

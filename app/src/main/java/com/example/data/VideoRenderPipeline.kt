@@ -124,7 +124,11 @@ class VideoRenderPipeline(
             "-preset",
             "ultrafast",
             "-crf",
-            "23",
+            DEFAULT_VIDEO_CRF,
+            "-maxrate",
+            DEFAULT_VIDEO_MAXRATE,
+            "-bufsize",
+            DEFAULT_VIDEO_BUFSIZE,
             "-pix_fmt",
             "yuv420p",
             "-r",
@@ -169,6 +173,7 @@ class VideoRenderPipeline(
     val startTimeMs = System.currentTimeMillis()
     val tracker = MonotonicProgressTracker(startTimeMs, onProgress = onProgress)
     val workspaceDir = fileManager.workspaceDir
+    cleanupStaleTempFiles(workspaceDir, fileManager.outputDir)
     val partDirs = fileManager.listNaturalPartDirs()
 
     data class ActivePartSpec(
@@ -235,7 +240,7 @@ class VideoRenderPipeline(
         val slotEnd = (vIdx + 1) * prepSpan
         val videoStem = sanitizeStem(sourceVideo.nameWithoutExtension)
         val boomerangFile = File(workspaceDir, "boomerang_${videoStem}.mp4")
-        val gradedFile = File(workspaceDir, "graded_${videoStem}_${config.filterMode.slug}.mp4")
+        val gradedFile = File(workspaceDir, "graded_${videoStem}_${config.filterMode.slug}_v2.mp4")
 
         val boomCached = boomerangFile.exists() && boomerangFile.length() > 0L
         val gradeCached = gradedFile.exists() && gradedFile.length() > 0L
@@ -280,7 +285,11 @@ class VideoRenderPipeline(
                   "-preset",
                   "ultrafast",
                   "-crf",
-                  "20",
+                  DEFAULT_VIDEO_CRF,
+                  "-maxrate",
+                  "6M",
+                  "-bufsize",
+                  "12M",
                   "-pix_fmt",
                   "yuv420p",
                   "-r",
@@ -325,15 +334,19 @@ class VideoRenderPipeline(
                   "-preset",
                   "ultrafast",
                   "-crf",
-                  "23",
+                  DEFAULT_VIDEO_CRF,
+                  "-maxrate",
+                  DEFAULT_VIDEO_MAXRATE,
+                  "-bufsize",
+                  DEFAULT_VIDEO_BUFSIZE,
                   "-profile:v",
                   "high",
                   "-level",
                   "4.1",
                   "-g",
-                  "24",
+                  DEFAULT_VIDEO_GOP,
                   "-keyint_min",
-                  "24",
+                  DEFAULT_VIDEO_GOP,
                   "-sc_threshold",
                   "0",
                   "-pix_fmt",
@@ -372,7 +385,7 @@ class VideoRenderPipeline(
               "Pre-grading loop (${config.filterMode.displayName})...",
               force = true,
             )
-            val gradedTmp = File(workspaceDir, ".tmp_graded_${videoStem}_${config.filterMode.slug}.mp4")
+            val gradedTmp = File(workspaceDir, ".tmp_graded_${videoStem}_${config.filterMode.slug}_v2.mp4")
             activeTempFile = gradedTmp
             val boomDur =
               (durationProber(boomerangFile) ?: (cappedDur * 2.0)).coerceAtLeast(0.5)
@@ -389,15 +402,19 @@ class VideoRenderPipeline(
                   "-preset",
                   "fast",
                   "-crf",
-                  "21",
+                  DEFAULT_VIDEO_CRF,
+                  "-maxrate",
+                  DEFAULT_VIDEO_MAXRATE,
+                  "-bufsize",
+                  DEFAULT_VIDEO_BUFSIZE,
                   "-profile:v",
                   "high",
                   "-level",
                   "4.1",
                   "-g",
-                  "24",
+                  DEFAULT_VIDEO_GOP,
                   "-keyint_min",
-                  "24",
+                  DEFAULT_VIDEO_GOP,
                   "-sc_threshold",
                   "0",
                   "-pix_fmt",
@@ -546,7 +563,7 @@ class VideoRenderPipeline(
                 "-c:a",
                 "aac",
                 "-b:a",
-                "320k",
+                DEFAULT_AUDIO_BITRATE,
                 "-ac",
                 "2",
                 "-ar",
@@ -582,15 +599,19 @@ class VideoRenderPipeline(
                 "-preset",
                 "fast",
                 "-crf",
-                "21",
+                DEFAULT_VIDEO_CRF,
+                "-maxrate",
+                DEFAULT_VIDEO_MAXRATE,
+                "-bufsize",
+                DEFAULT_VIDEO_BUFSIZE,
                 "-profile:v",
                 "high",
                 "-level",
                 "4.1",
                 "-g",
-                "24",
+                DEFAULT_VIDEO_GOP,
                 "-keyint_min",
-                "24",
+                DEFAULT_VIDEO_GOP,
                 "-sc_threshold",
                 "0",
                 "-pix_fmt",
@@ -602,7 +623,7 @@ class VideoRenderPipeline(
                 "-c:a",
                 "aac",
                 "-b:a",
-                "320k",
+                DEFAULT_AUDIO_BITRATE,
                 "-ac",
                 "2",
                 "-ar",
@@ -630,6 +651,7 @@ class VideoRenderPipeline(
           tracker.report(partEnd, "Part ${spec.partNumber}: Rendered.", force = true)
           onLog("Rendered Part ${spec.partNumber}: ${renderedPartFile.name}", LogLevel.SUCCESS)
         }
+        voiceRawWav.delete()
         renderedPartFiles += renderedPartFile
       }
       tracker.report(75.0, "All parts rendered.", force = true)
@@ -680,15 +702,19 @@ class VideoRenderPipeline(
               "-preset",
               "fast",
               "-crf",
-              "20",
+              "23",
+              "-maxrate",
+              DEFAULT_VIDEO_MAXRATE,
+              "-bufsize",
+              DEFAULT_VIDEO_BUFSIZE,
               "-profile:v",
               "high",
               "-level",
               "4.1",
               "-g",
-              "24",
+              DEFAULT_VIDEO_GOP,
               "-keyint_min",
-              "24",
+              DEFAULT_VIDEO_GOP,
               "-sc_threshold",
               "0",
               "-pix_fmt",
@@ -700,7 +726,7 @@ class VideoRenderPipeline(
               "-c:a",
               "aac",
               "-b:a",
-              "320k",
+              DEFAULT_AUDIO_BITRATE,
               "-ac",
               "2",
               "-ar",
@@ -731,15 +757,19 @@ class VideoRenderPipeline(
               "-preset",
               "fast",
               "-crf",
-              "20",
+              "23",
+              "-maxrate",
+              DEFAULT_VIDEO_MAXRATE,
+              "-bufsize",
+              DEFAULT_VIDEO_BUFSIZE,
               "-profile:v",
               "high",
               "-level",
               "4.1",
               "-g",
-              "24",
+              DEFAULT_VIDEO_GOP,
               "-keyint_min",
-              "24",
+              DEFAULT_VIDEO_GOP,
               "-sc_threshold",
               "0",
               "-pix_fmt",
@@ -751,7 +781,7 @@ class VideoRenderPipeline(
               "-c:a",
               "aac",
               "-b:a",
-              "320k",
+              DEFAULT_AUDIO_BITRATE,
               "-ac",
               "2",
               "-ar",
@@ -815,15 +845,19 @@ class VideoRenderPipeline(
               "-preset",
               "fast",
               "-crf",
-              "20",
+              "23",
+              "-maxrate",
+              DEFAULT_VIDEO_MAXRATE,
+              "-bufsize",
+              DEFAULT_VIDEO_BUFSIZE,
               "-profile:v",
               "high",
               "-level",
               "4.1",
               "-g",
-              "24",
+              DEFAULT_VIDEO_GOP,
               "-keyint_min",
-              "24",
+              DEFAULT_VIDEO_GOP,
               "-sc_threshold",
               "0",
               "-pix_fmt",
@@ -835,7 +869,7 @@ class VideoRenderPipeline(
               "-c:a",
               "aac",
               "-b:a",
-              "320k",
+              DEFAULT_AUDIO_BITRATE,
               "-ac",
               "2",
               "-ar",
@@ -866,15 +900,19 @@ class VideoRenderPipeline(
               "-preset",
               "fast",
               "-crf",
-              "20",
+              "23",
+              "-maxrate",
+              DEFAULT_VIDEO_MAXRATE,
+              "-bufsize",
+              DEFAULT_VIDEO_BUFSIZE,
               "-profile:v",
               "high",
               "-level",
               "4.1",
               "-g",
-              "24",
+              DEFAULT_VIDEO_GOP,
               "-keyint_min",
-              "24",
+              DEFAULT_VIDEO_GOP,
               "-sc_threshold",
               "0",
               "-pix_fmt",
@@ -886,7 +924,7 @@ class VideoRenderPipeline(
               "-c:a",
               "aac",
               "-b:a",
-              "320k",
+              DEFAULT_AUDIO_BITRATE,
               "-ac",
               "2",
               "-ar",
@@ -985,6 +1023,9 @@ class VideoRenderPipeline(
       }
       atomicReplace(tmpMasterNoBgm, masterNoBgm)
       activeTempFile = null
+      masterListFile.delete()
+      stdTransitionFile?.delete()
+      stdOutroFile?.delete()
       tracker.report(88.0, "Master concat complete.", force = true)
 
       val masterDuration =
@@ -1031,7 +1072,7 @@ class VideoRenderPipeline(
             "-c:a",
             "aac",
             "-b:a",
-            "320k",
+            DEFAULT_AUDIO_BITRATE,
             "-ac",
             "2",
             "-ar",
@@ -1073,6 +1114,7 @@ class VideoRenderPipeline(
       }
       atomicReplace(tmpFinalOutput, finalOutput)
       activeTempFile = null
+      masterNoBgm.delete()
 
       // =========================================================================
       // Stage 6 (97% - 100%): Gallery Export & Optional Auto-Clean
@@ -1140,9 +1182,29 @@ class VideoRenderPipeline(
     throw IllegalStateException("$stageLabel failed (exit ${result.exitCode}): ${tail.takeLast(300)}")
   }
 
+  private fun cleanupStaleTempFiles(vararg dirs: File) {
+    dirs.forEach { dir ->
+      dir.listFiles()?.forEach { file ->
+        if (!file.isFile) return@forEach
+        val name = file.name
+        val isStaleTmp = name.startsWith(".tmp_")
+        val isLegacyGraded = name.startsWith("graded_") && !name.endsWith("_v2.mp4")
+        if (isStaleTmp || isLegacyGraded) {
+          file.delete()
+        }
+      }
+    }
+  }
+
   private fun formatSeconds(sec: Double): String = formatSecondsStatic(sec)
 
   companion object {
+    const val DEFAULT_VIDEO_CRF = "24"
+    const val DEFAULT_VIDEO_MAXRATE = "4500k"
+    const val DEFAULT_VIDEO_BUFSIZE = "9000k"
+    const val DEFAULT_VIDEO_GOP = "48"
+    const val DEFAULT_AUDIO_BITRATE = "192k"
+
     private val ffmpegTimeRegex = Regex("""time=(\d+):(\d+):(\d+(?:\.\d+)?)""")
 
     fun parseFfmpegTimeSeconds(line: String): Double? {

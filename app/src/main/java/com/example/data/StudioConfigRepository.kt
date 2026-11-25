@@ -8,6 +8,17 @@ class StudioConfigRepository(context: Context) {
     context.getSharedPreferences("missing_page_studio_config", Context.MODE_PRIVATE)
 
   fun load(): StudioConfig {
+    val autoClean =
+      if (!prefs.getBoolean(KEY_AUTO_CLEAN_MIGRATED_V2, false)) {
+        prefs.edit()
+          .putBoolean(KEY_AUTO_CLEAN, true)
+          .putBoolean(KEY_AUTO_CLEAN_MIGRATED_V2, true)
+          .apply()
+        true
+      } else {
+        prefs.getBoolean(KEY_AUTO_CLEAN, true)
+      }
+
     return StudioConfig(
       apiKey = prefs.getString(KEY_API_KEY, "") ?: "",
       voiceId =
@@ -28,7 +39,7 @@ class StudioConfigRepository(context: Context) {
       turboModeEnabled = prefs.getBoolean(KEY_TURBO_MODE, true),
       smartResumeEnabled = prefs.getBoolean(KEY_SMART_RESUME, true),
       transitionsAfter = prefs.getString(KEY_TRANSITIONS_AFTER, "2,4,6") ?: "2,4,6",
-      autoCleanAfterExport = prefs.getBoolean(KEY_AUTO_CLEAN, false),
+      autoCleanAfterExport = autoClean,
       transitionOriginalName = prefs.getString(KEY_TRANSITION_NAME, "") ?: "",
       bgmOriginalName = prefs.getString(KEY_BGM_NAME, "") ?: "",
       outroOriginalName = prefs.getString(KEY_OUTRO_NAME, "") ?: "",
@@ -52,6 +63,7 @@ class StudioConfigRepository(context: Context) {
       .putBoolean(KEY_SMART_RESUME, config.smartResumeEnabled)
       .putString(KEY_TRANSITIONS_AFTER, config.transitionsAfter)
       .putBoolean(KEY_AUTO_CLEAN, config.autoCleanAfterExport)
+      .putBoolean(KEY_AUTO_CLEAN_MIGRATED_V2, true)
       .putString(KEY_TRANSITION_NAME, config.transitionOriginalName)
       .putString(KEY_BGM_NAME, config.bgmOriginalName)
       .putString(KEY_OUTRO_NAME, config.outroOriginalName)
@@ -73,6 +85,7 @@ class StudioConfigRepository(context: Context) {
     private const val KEY_SMART_RESUME = "smart_resume_enabled"
     private const val KEY_TRANSITIONS_AFTER = "transitions_after"
     private const val KEY_AUTO_CLEAN = "auto_clean_after_export"
+    private const val KEY_AUTO_CLEAN_MIGRATED_V2 = "auto_clean_migrated_v2"
     private const val KEY_TRANSITION_NAME = "transition_original_name"
     private const val KEY_BGM_NAME = "bgm_original_name"
     private const val KEY_OUTRO_NAME = "outro_original_name"

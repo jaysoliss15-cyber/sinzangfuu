@@ -71,7 +71,7 @@ data class StudioConfig(
   val turboModeEnabled: Boolean = true,
   val smartResumeEnabled: Boolean = true,
   val transitionsAfter: String = "2,4,6",
-  val autoCleanAfterExport: Boolean = false,
+  val autoCleanAfterExport: Boolean = true,
   val transitionOriginalName: String = "",
   val bgmOriginalName: String = "",
   val outroOriginalName: String = "",
